@@ -1,0 +1,184 @@
+variables:
+  IMAGE_NAME: "quay.io/aipcc-cicd/central-linter"
+  CONTAINERFILE_PATH: "Containerfile"
+  CONTEXT_DIR: "."
+
+stages:
+  - lint
+  - build
+  - test
+  - push
+
+# Default tags for non-arch-specific jobs
+default:
+  tags:
+    - aipcc-small-x86_64
+
+# Common rules for all jobs
+.default_rules:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+# Vault helper - authenticates to Corp Vault and exports VAULT_TOKEN
+.vault_auth:
+  before_script:
+    - |
+      set -e
+      echo $VAULT_ADDR
+      podman run --rm --cap-add IPC_LOCK \
+        -e VAULT_ADDR=$VAULT_ADDR \
+        -e VAULT_SKIP_VERIFY=1 \
+        docker.io/hashicorp/vault:1.17.1 \
+          vault write --format json auth/approle/login role_id=$VAULT_ROLE_ID secret_id=$VAULT_SECRET_ID > auth.json
+      curl -L -o jq https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux64 && chmod +x jq && sudo mv jq /usr/local/bin/
+      export VAULT_TOKEN=$(cat auth.json | jq -r '.auth.client_token')
+      rm auth.json
+
+# Template for building images
+.build_template:
+  extends: .default_rules
+  stage: build
+  image: quay.io/podman/stable:latest
+  script:
+    - echo "Building image for ${ARCH}..."
+    - podman build
+        --format docker
+        --tag ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-${ARCH}
+        --file ${CONTAINERFILE_PATH}
+        ${CONTEXT_DIR}
+    - echo "Saving image to tarball..."
+    - mkdir -p images
+    - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-${ARCH} oci-archive:images/image-${ARCH}.tar
+    - echo "Build complete for ${ARCH}"
+  artifacts:
+    paths:
+      - images/image-${ARCH}.tar
+    expire_in: 1 hour
+
+# Lint this repository using the central-linter image
+lint:
+  extends: .default_rules
+  stage: lint
+  image: quay.io/aipcc-cicd/central-linter:latest
+  script:
+    - make linter-central
+
+# Build for amd64 (uses native amd64 runner)
+build-amd64:
+  extends: .build_template
+  tags:
+    - aipcc-small-x86_64
+  variables:
+    ARCH: amd64
+
+# Build for arm64 (uses native arm64 runner)
+build-arm64:
+  extends: .build_template
+  tags:
+    - aipcc-small-aarch64
+  variables:
+    ARCH: arm64
+
+# Template for testing images
+.test_template:
+  extends: .default_rules
+  stage: test
+  image: quay.io/podman/stable:latest
+  script:
+    - echo "Testing image for ${ARCH} from tarball..."
+    - |
+      IMAGE_ID=$(podman load -i images/image-${ARCH}.tar | awk '/Loaded image:/ {print $NF}')
+      podman run --rm ${IMAGE_ID} ruff --version
+      podman run --rm ${IMAGE_ID} yamllint --version
+      podman run --rm ${IMAGE_ID} renovate-config-validator
+    - echo "Test passed for ${ARCH}"
+
+# Test amd64 image
+test-amd64:
+  extends: .test_template
+  tags:
+    - aipcc-small-x86_64
+  needs: ["build-amd64"]
+  variables:
+    ARCH: amd64
+  dependencies:
+    - build-amd64
+
+# Test arm64 image
+test-arm64:
+  extends: .test_template
+  tags:
+    - aipcc-small-aarch64
+  needs: ["build-arm64"]
+  variables:
+    ARCH: arm64
+  dependencies:
+    - build-arm64
+
+# Push arch-specific images and create multi-arch manifests
+push:
+  extends: .vault_auth
+  stage: push
+  image: quay.io/podman/stable:latest
+  needs: ["build-amd64", "build-arm64", "test-amd64", "test-arm64"]
+  dependencies:
+    - build-amd64
+    - build-arm64
+  before_script:
+    - !reference [.vault_auth, before_script]
+    - |
+      set -e
+      # Fetch Quay credentials from vault
+      podman run --rm --cap-add IPC_LOCK \
+        -e VAULT_ADDR=$VAULT_ADDR \
+        -e VAULT_SKIP_VERIFY=1 \
+        -e VAULT_TOKEN=$VAULT_TOKEN \
+        docker.io/hashicorp/vault:1.17.1 \
+          vault kv get --format json apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab > quay_creds.json
+      export QUAY_USERNAME=$(cat quay_creds.json | jq -r '.data.data.username')
+      export QUAY_PASSWORD=$(cat quay_creds.json | jq -r '.data.data.password')
+      rm quay_creds.json
+
+      # Login to Quay
+      echo "$QUAY_PASSWORD" | podman login -u "$QUAY_USERNAME" --password-stdin quay.io
+  script:
+    - echo "Loading arch-specific images from tarballs..."
+    - |
+      AMD64_ID=$(podman load -i images/image-amd64.tar | awk '/Loaded image:/ {print $NF}')
+      ARM64_ID=$(podman load -i images/image-arm64.tar | awk '/Loaded image:/ {print $NF}')
+    - echo "Tagging images with proper names..."
+    - podman tag ${AMD64_ID} ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64
+    - podman tag ${ARM64_ID} ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
+    - echo "Pushing arch-specific images..."
+    - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64
+    - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
+    - |
+      # Helper function to create and push manifest
+      create_and_push_manifest() {
+        local tag=$1
+        echo "Creating manifest for ${tag}..."
+        podman manifest rm ${IMAGE_NAME}:${tag} 2>/dev/null || true
+        podman manifest create ${IMAGE_NAME}:${tag} \
+          ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64 \
+          ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
+        podman manifest push ${IMAGE_NAME}:${tag}
+        echo "Successfully pushed ${IMAGE_NAME}:${tag} (amd64, arm64)"
+      }
+
+      # Always push commit-sha
+      create_and_push_manifest ${CI_COMMIT_SHORT_SHA}
+
+      # Push tag version if this is a tag
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        create_and_push_manifest ${CI_COMMIT_TAG}
+      fi
+
+      # Push latest on main branch
+      if [ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]; then
+        create_and_push_manifest latest
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'

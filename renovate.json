@@ -1,0 +1,67 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>redhat/rhel-ai/renovate-config"
+  ],
+  "baseBranches": [
+    "main"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "Containerfile"
+      ],
+      "matchStrings": [
+        "ARG BASE_IMAGE=(?<depName>.*):(?<currentValue>.*)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "redhat"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "Containerfile"
+      ],
+      "matchStrings": [
+        "ARG RUFF_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "astral-sh/ruff",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "Containerfile"
+      ],
+      "matchStrings": [
+        "ARG YAMLLINT_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "pypi",
+      "depNameTemplate": "yamllint"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "Containerfile"
+      ],
+      "matchStrings": [
+        "ARG RENOVATE_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "renovate"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "registry.access.redhat.com/ubi10/nodejs-22"
+      ],
+      "allowedVersions": "/^10\\.0\\-[\\d]+$/",
+      "matchBaseBranches": [
+        "main"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# Shared Ruff configuration
+#
+# This config is used by:
+# 1. Central-linter repository (self-linting via symlink .ruff.toml -> config/ruff.toml)
+# 2. Client repositories that don't provide their own ruff config (bundled in image at ~/.config/ruff.toml)
+
+[lint]
+# Enable commonly recommended rules
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+]
+
+# Ignore some strict rules
+ignore = [
+    "E501",  # Line too long
+]

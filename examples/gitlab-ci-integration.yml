@@ -1,0 +1,122 @@
+# Example: How to integrate central-linter into your GitLab CI/CD pipeline
+#
+# Copy this to your project's .gitlab-ci.yml and customize as needed
+
+# Shared template for all linter jobs
+.lint-template:
+  stage: lint
+  # IMPORTANT: Pin to a specific version for stability in production
+  # Use :latest ONLY for central-linter repo self-linting
+  image: quay.io/aipcc-cicd/central-linter:v0.1.0  # Pin to stable version
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ============================================================================
+# Option 1: Run all linters together using Makefile
+# ============================================================================
+
+# Use Case 1a: No config files (uses shared configs from container)
+lint-all-shared-config:
+  extends: .lint-template
+  script:
+    - make linter-central
+
+# Use Case 1b: Config files in standard locations (auto-discovery)
+# Project has: .ruff.toml, .yamllint, renovate.json in project root
+lint-all-auto-discovery:
+  extends: .lint-template
+  script:
+    - make linter-central
+
+# Use Case 1c: Custom config locations (pass via Makefile variables)
+# Project has: .ci/ruff.toml, .ci/yamllint.yaml, config/renovate.json
+lint-all-custom-configs:
+  extends: .lint-template
+  variables:
+    RUFF_CONFIG: "--config .ci/ruff.toml"
+    YAMLLINT_CONFIG: "-c .ci/yamllint.yaml"
+    RENOVATE_CONFIG: "config/renovate.json"
+  script:
+    - make linter-central
+
+# Use Case 1d: Custom config locations (inline pass to make)
+lint-all-custom-inline:
+  extends: .lint-template
+  script:
+    - make linter-central
+        RUFF_CONFIG="--config .ci/ruff.toml"
+        YAMLLINT_CONFIG="-c .ci/yamllint.yaml"
+        RENOVATE_CONFIG="config/renovate.json"
+
+# Use Case 1e: With additional arguments (e.g., auto-fix)
+lint-all-with-args:
+  extends: .lint-template
+  variables:
+    RUFF_ARGS: "check --fix ."
+    YAMLLINT_ARGS: "-s ."  # Strict mode
+  script:
+    - make linter-central
+
+# ============================================================================
+# Option 2: Run linters individually
+# ============================================================================
+
+# Use Case 2a: Individual linters with auto-discovery (no config specified)
+ruff-basic:
+  extends: .lint-template
+  script:
+    - ruff check .
+
+yamllint-basic:
+  extends: .lint-template
+  script:
+    - yamllint .
+
+renovate-validate-basic:
+  extends: .lint-template
+  script:
+    - renovate-config-validator
+
+# Use Case 2b: Individual linters with custom config paths
+ruff-custom-config:
+  extends: .lint-template
+  script:
+    - ruff check --config .ci/ruff.toml .
+
+yamllint-custom-config:
+  extends: .lint-template
+  script:
+    - yamllint -c .ci/yamllint.yaml .
+
+renovate-validate-custom-config:
+  extends: .lint-template
+  script:
+    - renovate-config-validator --strict config/renovate.json
+
+# Use Case 2c: Individual linters with additional arguments
+ruff-with-fix:
+  extends: .lint-template
+  script:
+    - ruff check --fix .
+
+ruff-with-format:
+  extends: .lint-template
+  script:
+    - ruff format --check .
+
+yamllint-strict:
+  extends: .lint-template
+  script:
+    - yamllint -s .
+
+# Use Case 2d: Individual linters with both custom config and args
+ruff-custom-config-and-fix:
+  extends: .lint-template
+  script:
+    - ruff check --config .ci/ruff.toml --fix .
+
+yamllint-custom-config-strict:
+  extends: .lint-template
+  script:
+    - yamllint -c .ci/yamllint.yaml -s .
