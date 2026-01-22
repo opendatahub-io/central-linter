@@ -4,7 +4,6 @@ import os
 import re
 import subprocess
 import sys
-import importlib.resources
 import requests
 
 from messages import error
@@ -65,6 +64,10 @@ JIRA_INTERNAL = re.compile(r"INTERNAL", flags=re.MULTILINE)
 base_sha = os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA", "main")
 mrid = os.getenv("CI_MERGE_REQUEST_IID", "(local branch)")
 
+# Configure git safe directory to allow running git commands in mounted repos
+# This is needed when the repo is mounted in a container with different ownership
+subprocess.run(["git", "config", "--global", "--add", "safe.directory", "*"], check=False)
+
 # verify that each commit title in the MR begins with a Jira ID
 cmd = ["git", "log", "--oneline", "--no-merges", f"{base_sha}.."]
 git_cmd = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
@@ -86,18 +89,31 @@ for commit in commits.splitlines():
             sys.exit(1)
 
         # The Jira ticket id is INTERNAL.  Compare the modified files to the files in
-        # https://gitlab.com/platform-engineering-org/gitlab-ci/-/raw/main/lint/config/linterignore
+        # config/linterignore
         # This file contains the names of files that can be modified when using
         # INTERNAL.
 
         linterignorecontents = []
-        try:
-            linterignore_path = importlib.resources.files("lint").joinpath("config/linterignore")
-            with linterignore_path.open('r') as file:
-                linterignorecontents = file.read()
-        except FileNotFoundError:
-            print(f"ERROR: Unable to find linterignore file from acessing resources in {linterignore_path}")
+        # Try to find linterignore in standard locations
+        linterignore_paths = [
+            os.path.join(os.environ.get("HOME", "/home/linter"), ".config/linterignore"),
+            "config/linterignore",
+            ".linterignore"
+        ]
+
+        linterignore_path = None
+        for path in linterignore_paths:
+            if os.path.exists(path):
+                linterignore_path = path
+                break
+
+        if linterignore_path is None:
+            print(f"ERROR: Unable to find linterignore file in any of: {linterignore_paths}")
             sys.exit(1)
+
+        try:
+            with open(linterignore_path, 'r') as file:
+                linterignorecontents = file.read()
         except PermissionError:
             print(f"ERROR: No permission to read file from {linterignore_path}")
             sys.exit(1)
@@ -136,9 +152,9 @@ for commit in commits.splitlines():
         for _line in body.splitlines():
             if _line.strip() == "" or _line.strip() == '"':
                 continue
-            if _line.split()[2] == "lint/config/linterignore":
+            if _line.split()[2] == "config/linterignore":
                 error(
-                    f"ERROR: commit {commitid} lint/config/linterignore changes cannot be made with INTERNAL -- a JIRA must be used to modify this file.\n{AIPCCPolicyDocMessage}"
+                    f"ERROR: commit {commitid} config/linterignore changes cannot be made with INTERNAL -- a JIRA must be used to modify this file.\n{AIPCCPolicyDocMessage}"
                 )
                 sys.exit(1)
 

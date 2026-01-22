@@ -1,4 +1,4 @@
-.PHONY: help linter-central linter-ruff-check linter-yamllint linter-renovate build push test clean
+.PHONY: help linter-central linter-ruff-check linter-yamllint linter-renovate linter-mr-commit build push test clean
 
 # Configuration
 IMAGE_NAME := quay.io/aipcc-cicd/central-linter
@@ -19,10 +19,11 @@ RENOVATE_CONFIG ?=
 
 help:
 	@echo "Available targets:"
-	@echo "  linter-central     - Run all linters (ruff, yamllint, renovate-config-validator)"
+	@echo "  linter-central     - Run all linters (ruff, yamllint, renovate, mr-commit)"
 	@echo "  linter-ruff-check  - Run only ruff check"
 	@echo "  linter-yamllint    - Run only yamllint"
 	@echo "  linter-renovate    - Run only renovate-config-validator"
+	@echo "  linter-mr-commit   - Run only MR/commit linter"
 	@echo "  build              - Build image for native architecture"
 	@echo "  test               - Test the linters in the container"
 	@echo "  push               - Push image to quay.io"
@@ -33,7 +34,7 @@ help:
 	@echo "  YAMLLINT_CONFIG=path   - Custom yamllint config (e.g., -c .ci/yamllint.yaml)"
 	@echo "  RENOVATE_CONFIG=path   - Custom renovate file (default: auto-discovery)"
 
-linter-central: linter-ruff-check linter-yamllint linter-renovate
+linter-central: linter-ruff-check linter-yamllint linter-renovate linter-mr-commit
 	@echo ""
 	@echo "All linters passed successfully"
 
@@ -81,6 +82,10 @@ linter-renovate:
 		renovate-config-validator $(RENOVATE_VALIDATOR_ARGS) || (echo "ERROR: Renovate config validation failed" && exit 1); \
 	fi
 	@echo "Renovate config validation passed"
+
+linter-mr-commit:
+	@echo "Running MR/commit linter..."
+	@python3 $$HOME/.scripts/mr_commit_linter.py
 
 build:
 	@echo "Building image for native architecture..."
