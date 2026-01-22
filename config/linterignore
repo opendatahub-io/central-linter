@@ -1,0 +1,13 @@
+# Files that can be modified using INTERNAL (without a JIRA ticket)
+# This file contains paths that are allowed for INTERNAL-tagged commits
+#
+# Patterns:
+#   exact/path/to/file.txt    - Single file
+#   directory/*               - All files in directory (non-recursive)
+#
+# Common files that typically don't require JIRA tickets:
+README.md
+.gitignore
+.gitlab-ci.yml
+Makefile
+renovate.json
