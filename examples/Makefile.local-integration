@@ -1,0 +1,106 @@
+# Example Makefile for integrating central-linter into client repositories
+#
+# This file demonstrates how to integrate central-linter for local development.
+# Copy the relevant sections to your project's Makefile and customize as needed.
+
+# =============================================================================
+# Central-Linter Configuration
+# =============================================================================
+
+# Container image settings
+LINTER_IMAGE ?= quay.io/aipcc-cicd/central-linter:v0.1.0
+LINTER_MOUNT := -v $(CURDIR):/workspace:z -w /workspace
+LINTER_RUN := podman run --rm $(LINTER_MOUNT) $(LINTER_IMAGE)
+
+# Optional: Custom config paths (leave empty for auto-discovery)
+# These can be overridden when calling make, e.g.:
+#   make linter-central RUFF_CONFIG="--config .ci/ruff.toml"
+RUFF_CONFIG ?=
+YAMLLINT_CONFIG ?=
+RENOVATE_CONFIG ?=
+
+# =============================================================================
+# USE CASE 1: No Config Files (Uses Shared Configs from Container)
+# =============================================================================
+#
+# When your repo has NO .ruff.toml, .yamllint, or renovate.json files,
+# the linters will fall back to shared configs bundled in the container
+# at ~/.config/linter/*.toml
+#
+# Usage:
+#   make linter-central
+#
+# What happens:
+#   - Ruff uses ~/.config/linter/ruff.toml (line-length 120, E/F/I rules)
+#   - yamllint uses ~/.config/linter/yamllint.yaml (line-length 120 warning)
+#   - renovate auto-discovers or passes if none found
+
+# =============================================================================
+# USE CASE 2: Standard Locations (Auto-Discovery)
+# =============================================================================
+#
+# When your repo has config files in standard locations:
+#   - .ruff.toml or ruff.toml or pyproject.toml (in project root)
+#   - .yamllint or .yamllint.yaml or .yamllint.yml (in project root)
+#   - renovate.json or .renovaterc (in project root)
+#
+# Usage:
+#   make linter-central
+#
+# What happens:
+#   - Linters auto-discover these files in your project root
+#   - Shared configs from container are ignored (auto-discovery takes priority)
+
+# =============================================================================
+# USE CASE 3: Custom Locations (Explicit Paths via Variables)
+# =============================================================================
+#
+# When your repo has config files in non-standard locations like:
+#   .ci/ruff.toml
+#   .ci/yamllint.yaml
+#   config/renovate.json
+#
+# Usage:
+#   make linter-central \
+#     RUFF_CONFIG="--config .ci/ruff.toml" \
+#     YAMLLINT_CONFIG="-c .ci/yamllint.yaml" \
+#     RENOVATE_CONFIG="config/renovate.json"
+#
+# What happens:
+#   - Variables are passed through to the container's inner Makefile
+#   - Linters use the explicitly specified config files
+
+# =============================================================================
+# Central-Linter Targets
+# =============================================================================
+
+.PHONY: linter-central
+linter-central: ## Run all linters (ruff, yamllint, renovate-config-validator)
+	$(LINTER_RUN) make linter-central \
+		RUFF_CONFIG="$(RUFF_CONFIG)" \
+		YAMLLINT_CONFIG="$(YAMLLINT_CONFIG)" \
+		RENOVATE_CONFIG="$(RENOVATE_CONFIG)"
+
+.PHONY: linter-ruff
+linter-ruff: ## Run only ruff linter
+	@if [ -n "$(RUFF_CONFIG)" ]; then \
+		$(LINTER_RUN) ruff $(RUFF_CONFIG) check .; \
+	else \
+		$(LINTER_RUN) ruff check .; \
+	fi
+
+.PHONY: linter-yamllint
+linter-yamllint: ## Run only yamllint
+	@if [ -n "$(YAMLLINT_CONFIG)" ]; then \
+		$(LINTER_RUN) yamllint $(YAMLLINT_CONFIG) .; \
+	else \
+		$(LINTER_RUN) yamllint .; \
+	fi
+
+.PHONY: linter-renovate
+linter-renovate: ## Run only renovate-config-validator
+	@if [ -n "$(RENOVATE_CONFIG)" ] && [ -f "$(RENOVATE_CONFIG)" ]; then \
+		$(LINTER_RUN) renovate-config-validator $(RENOVATE_CONFIG); \
+	else \
+		$(LINTER_RUN) renovate-config-validator; \
+	fi
