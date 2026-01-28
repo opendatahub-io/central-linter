@@ -21,18 +21,21 @@ RUN dnf install -y \
 RUN pip3 install --no-cache-dir \
         "ruff==${RUFF_VERSION}" \
         "yamllint==${YAMLLINT_VERSION}" \
+        colorama \
+        requests \
     && npm install -g "renovate@${RENOVATE_VERSION}"
 
 # Set up directories for OpenShift compatibility (UID 1001 already exists in base image)
 # OpenShift runs with arbitrary UIDs in GID 0 (root group)
-RUN mkdir -p /workspace /home/linter/.config/ && \
+RUN mkdir -p /workspace /home/linter/.config/ /home/linter/.scripts/ && \
     chown -R 1001:0 /workspace /home/linter && chmod -R g=u /workspace /home/linter
 
-# Copy shared linter configurations (used by both central-linter and client repos)
+# Copy shared linter configurations and scripts
 # Place in user's home directory so they're accessible and follow XDG conventions
 # Set ownership to root group (GID 0) for OpenShift arbitrary UID support
 COPY --chown=1001:0 config/ /home/linter/.config/
-RUN chmod -R g=u /home/linter/.config/
+COPY --chown=1001:0 scripts/ /home/linter/.scripts/
+RUN chmod -R g=u /home/linter/.config/ /home/linter/.scripts/
 
 # Use numeric UID for better compatibility
 USER 1001

@@ -9,6 +9,7 @@ This image includes the following linters:
 - **ruff** - Fast Python linter and code formatter
 - **yamllint** - YAML file linter
 - **renovate-config-validator** - Validates Renovate configuration files
+- **mr-commit-linter** - Validates GitLab merge requests and commit messages against AIPCC guidelines
 
 ## Image Location
 
@@ -38,6 +39,7 @@ The `linter-central` target executes:
 - `ruff check .`
 - `yamllint .`
 - `renovate-config-validator` (auto-discovers configs, passes if none found)
+- `mr-commit-linter` (validates commit messages and MR titles/descriptions)
 
 ### Using the Container Image
 
@@ -761,6 +763,103 @@ podman run --rm --user 1000570000:0 \
 - Minimal base image (Red Hat UBI9)
 - No privileged operations required
 - Compatible with OpenShift `restricted` SCC (default, most secure)
+
+## MR/Commit Linter
+
+The MR/commit linter validates merge requests and commit messages against AIPCC commit guidelines.
+
+### What It Checks
+
+**For each commit:**
+1. Title must begin with a valid JIRA ticket ID (RHELAI, RHOAIENG, AIPCC, INFERENG, RHAIENG) or INTERNAL
+2. Body must contain a `Signed-off-by:` tag
+3. Body must be at least 3 lines (description + empty line + Signed-off-by)
+
+**For merge requests (CI only):**
+1. MR title must begin with a valid JIRA ticket ID or INTERNAL
+2. MR description must contain a `Signed-off-by:` tag
+
+**INTERNAL commits:**
+- Can only modify files listed in `config/linterignore`
+- Cannot modify `config/linterignore` itself (requires JIRA ticket)
+
+**Bot exemptions:**
+- Commits/MRs created by `platform-engineering-bot` or `aipcc-cicd-bot` are automatically skipped
+
+### Usage
+
+```bash
+# Run all linters including MR/commit linter
+make linter-central
+
+# Run MR/commit linter only
+make linter-mr-commit
+```
+
+### Local vs CI Behavior
+
+**Local development:**
+- MR title/description checks are skipped (no CI environment variables)
+- Commit message checks still run against your branch commits
+- Compares your branch against `main` branch (or `CI_MERGE_REQUEST_DIFF_BASE_SHA` if set)
+
+**In GitLab CI:**
+- Checks all commits in the merge request
+- Validates MR title and description
+- Uses `CI_MERGE_REQUEST_DIFF_BASE_SHA` to determine commit range
+
+### INTERNAL File Allowlist
+
+The `config/linterignore` file defines which files can be modified with INTERNAL commits:
+
+```
+# config/linterignore
+README.md
+.gitignore
+.gitlab-ci.yml
+Makefile
+renovate.json
+```
+
+**To customize for your repository:**
+
+1. Create `.linterignore` in your repo root (overrides bundled config)
+2. List files that can be modified without JIRA tickets
+3. Supports exact paths and directory wildcards (`directory/*`)
+
+Example:
+```
+# .linterignore
+README.md
+docs/*
+test/fixtures/*
+```
+
+### Error Messages
+
+Common validation failures:
+
+```
+ERROR: Commit abc1234: title must begin with a valid Jira ticket (RHELAI,RHOAIENG, AIPCC, INFERENG, RHAIENG or INTERNAL).
+```
+Fix: Add JIRA ticket or INTERNAL to commit title
+
+```
+ERROR: Commit abc1234: commit does not contain a Signed-off-by: tag.
+```
+Fix: Add `Signed-off-by: Your Name <your.email@example.com>` to commit message
+
+```
+ERROR: Commit abc1234: description must be at least three lines in length
+```
+Fix: Add a meaningful commit description before the Signed-off-by line
+
+```
+ERROR: path/to/file.txt is not in /home/linter/.config/linterignore
+```
+Fix: Either use a JIRA ticket instead of INTERNAL, or add the file to linterignore
+
+For more details, see [AIPCC Commit and Merge Request Guidelines](https://docs.google.com/document/d/1TAicyqGKKELzaYL4o-Plz2s7tFUhOctZFzHErMQSc8c).
 
 ## Troubleshooting
 
