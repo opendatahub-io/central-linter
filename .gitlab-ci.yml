@@ -4,8 +4,8 @@ variables:
   CONTEXT_DIR: "."
 
 stages:
-  - lint
   - build
+  - lint
   - test
   - push
 
@@ -57,13 +57,24 @@ default:
       - images/image-${ARCH}.tar
     expire_in: 1 hour
 
-# Lint this repository using the central-linter image
+# Lint this repository using the newly built central-linter image
 lint:
   extends: .default_rules
   stage: lint
-  image: quay.io/aipcc-cicd/central-linter:latest
+  image: quay.io/podman/stable:latest
+  needs: ["build-amd64"]
+  dependencies:
+    - build-amd64
+  tags:
+    - aipcc-small-x86_64
+  before_script:
+    # Fetch main branch for mr-commit-linter to compare against
+    - git fetch origin main:main || true
   script:
-    - make linter-central
+    - echo "Loading newly built image from tarball..."
+    - IMAGE_ID=$(podman load -i images/image-amd64.tar | awk '/Loaded image:/ {print $NF}')
+    - echo "Running linter with newly built image..."
+    - podman run --rm -v ${CI_PROJECT_DIR}:/workspace:Z -w /workspace ${IMAGE_ID} make linter-central
 
 # Build for amd64 (uses native amd64 runner)
 build-amd64:

@@ -483,16 +483,15 @@ Configure in Settings → CI/CD → Variables:
 
 The pipeline automatically:
 
-1. **Lint** - Lints this repository using the central-linter image itself
-2. **Build** - Builds container images for both architectures in parallel on native runners:
+1. **Build** - Builds container images for both architectures in parallel on native runners:
    - Builds amd64 image on x86_64 runner
    - Builds arm64 image on aarch64 runner
    - Saves each image as an OCI archive tarball artifact
-3. **Test** - Tests both architecture images:
-   - Loads images from tarball artifacts
-   - Validates that all linters work correctly
-   - Tests run in parallel for both architectures
-4. **Push** - Pushes images and creates multi-arch manifests:
+2. **Lint & Test** - After build completes, lint and test jobs run in parallel:
+   - **Lint** (stage: lint) - Loads newly built amd64 image and runs `make linter-central`
+   - **Test amd64** (stage: test) - Loads amd64 image and validates all linters work
+   - **Test arm64** (stage: test) - Loads arm64 image and validates all linters work
+3. **Push** - Pushes images and creates multi-arch manifests:
    - Loads images from tarballs and tags them
    - Pushes architecture-specific images (`:commit-sha-amd64`, `:commit-sha-arm64`)
    - Creates and pushes multi-arch manifests:
@@ -500,6 +499,10 @@ The pipeline automatically:
      - Git tags → `:v0.1.0` (version tag) and `:commit-sha`
 
 All manifests support both `amd64` and `arm64` architectures.
+
+**Pipeline stages:** The pipeline uses 4 stages (build → lint → test → push) for organizational clarity, but lint and test jobs run in parallel after their build dependencies complete, improving efficiency.
+
+**Note:** The lint job uses the newly built image (not `:latest`), which allows linter configuration changes to be validated within the same merge request.
 
 **Note:** The `:latest` tag is only updated on main branch commits, not on every tag. This ensures backports or hotfix tags don't accidentally become "latest".
 
