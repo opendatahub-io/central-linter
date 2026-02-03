@@ -39,7 +39,10 @@ linter-central: linter-ruff-check linter-yamllint linter-renovate linter-mr-comm
 	@echo "All linters passed successfully"
 
 linter-ruff-check:
+	@echo ""
+	@echo "================================================================================"
 	@echo "Running ruff check..."
+	@echo "================================================================================"
 	@if [ -z "$(RUFF_CONFIG)" ]; then \
 		if [ ! -f ".ruff.toml" ] && [ ! -f "ruff.toml" ] && [ ! -f "pyproject.toml" ]; then \
 			if [ -f "$$HOME/.config/ruff.toml" ]; then \
@@ -55,9 +58,13 @@ linter-ruff-check:
 		ruff $(RUFF_CONFIG) $(RUFF_ARGS) || (echo "ERROR: Ruff check failed" && exit 1); \
 	fi
 	@echo "Ruff check passed"
+	@echo ""
 
 linter-yamllint:
+	@echo ""
+	@echo "================================================================================"
 	@echo "Running yamllint..."
+	@echo "================================================================================"
 	@if [ -z "$(YAMLLINT_CONFIG)" ]; then \
 		if [ ! -f ".yamllint" ] && [ ! -f ".yamllint.yaml" ] && [ ! -f ".yamllint.yml" ]; then \
 			if [ -f "$$HOME/.config/yamllint.yaml" ]; then \
@@ -73,19 +80,29 @@ linter-yamllint:
 		yamllint $(YAMLLINT_CONFIG) $(YAMLLINT_ARGS) || (echo "ERROR: YAML lint failed" && exit 1); \
 	fi
 	@echo "YAML lint passed"
+	@echo ""
 
 linter-renovate:
+	@echo ""
+	@echo "================================================================================"
 	@echo "Running renovate-config-validator..."
+	@echo "================================================================================"
 	@if [ -f "$(RENOVATE_CONFIG)" ]; then \
 		renovate-config-validator $(RENOVATE_VALIDATOR_ARGS) $(RENOVATE_CONFIG) || (echo "ERROR: Renovate config validation failed" && exit 1); \
 	else \
 		renovate-config-validator $(RENOVATE_VALIDATOR_ARGS) || (echo "ERROR: Renovate config validation failed" && exit 1); \
 	fi
 	@echo "Renovate config validation passed"
+	@echo ""
 
 linter-mr-commit:
+	@echo ""
+	@echo "================================================================================"
 	@echo "Running MR/commit linter..."
-	@python3 $$HOME/.scripts/mr_commit_linter.py
+	@echo "================================================================================"
+	@python3 $$HOME/.scripts/mr_commit_linter.py || (echo "ERROR: MR/commit linter failed" && exit 1)
+	@echo "MR/commit linter passed"
+	@echo ""
 
 build:
 	@echo "Building image for native architecture..."

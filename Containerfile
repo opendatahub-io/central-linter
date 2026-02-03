@@ -17,12 +17,18 @@ RUN dnf install -y \
         make \
     && dnf clean all
 
-# Install linters
+# Install Python packages: linters, script dependencies, and testing tools
 RUN pip3 install --no-cache-dir \
+        # Python linters
         "ruff==${RUFF_VERSION}" \
         "yamllint==${YAMLLINT_VERSION}" \
+        # Script dependencies (for mr_commit_linter)
         colorama \
         requests \
+        # Testing dependencies
+        pytest \
+        pytest-mock \
+    # Install Node.js linters
     && npm install -g "renovate@${RENOVATE_VERSION}"
 
 # Set up directories for OpenShift compatibility (UID 1001 already exists in base image)
