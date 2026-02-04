@@ -23,6 +23,9 @@ from scripts.mr_commit_linter import (
     validate_mr_description,
     read_linterignore_file,
     expand_directory_patterns,
+    is_binary_file,
+    should_skip_newline_check,
+    validate_files_newline_at_eof,
     MIN_COMMIT_BODY_LINES,
 )
 
@@ -326,6 +329,218 @@ class TestFileOperations:
             assert any("file2.py" in str(f) for f in result)
         finally:
             os.chdir(original_cwd)
+
+
+# ============================================================================
+# NEWLINE AT EOF VALIDATION TESTS
+# ============================================================================
+
+class TestNewlineAtEOF:
+    """Tests for newline-at-EOF validation."""
+
+    def test_is_binary_file_with_binary(self, tmp_path):
+        """Test binary file detection with actual binary content."""
+        binary_file = tmp_path / "test.bin"
+        binary_file.write_bytes(b'\x00\x01\x02\x03')
+        assert is_binary_file(str(binary_file)) is True
+
+    def test_is_binary_file_with_text(self, tmp_path):
+        """Test binary file detection with text content."""
+        text_file = tmp_path / "test.txt"
+        text_file.write_text("This is plain text\n")
+        assert is_binary_file(str(text_file)) is False
+
+    def test_is_binary_file_with_nonexistent(self):
+        """Test binary file detection with nonexistent file."""
+        assert is_binary_file("/nonexistent/file.txt") is True
+
+    def test_should_skip_newline_check_nonexistent(self):
+        """Test that non-existent files are skipped."""
+        assert should_skip_newline_check("/nonexistent/file.txt") is True
+
+    def test_should_skip_newline_check_directory(self, tmp_path):
+        """Test that directories are skipped."""
+        test_dir = tmp_path / "testdir"
+        test_dir.mkdir()
+        assert should_skip_newline_check(str(test_dir)) is True
+
+    def test_should_skip_newline_check_symlink(self, tmp_path):
+        """Test that symlinks are skipped."""
+        real_file = tmp_path / "real.txt"
+        real_file.write_text("content\n")
+        symlink = tmp_path / "link.txt"
+        symlink.symlink_to(real_file)
+        assert should_skip_newline_check(str(symlink)) is True
+
+    def test_should_skip_newline_check_binary(self, tmp_path):
+        """Test that binary files are skipped."""
+        binary_file = tmp_path / "binary.bin"
+        binary_file.write_bytes(b'\x00\x01\x02\x03')
+        assert should_skip_newline_check(str(binary_file)) is True
+
+    def test_should_skip_newline_check_text_file(self, tmp_path):
+        """Test that regular text files are NOT skipped."""
+        text_file = tmp_path / "text.txt"
+        text_file.write_text("regular text file\n")
+        assert should_skip_newline_check(str(text_file)) is False
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_success(self, mock_get_files, tmp_path):
+        """Test validation when all text files have newlines at EOF."""
+        # Create test files with newlines
+        file1 = tmp_path / "file1.txt"
+        file1.write_text("content\n")
+        file2 = tmp_path / "file2.py"
+        file2.write_text("#!/usr/bin/env python3\nprint('hello')\n")
+
+        mock_get_files.return_value = [str(file1), str(file2)]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is True
+        assert result.error_message is None
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_missing_newline(self, mock_get_files, tmp_path):
+        """Test validation when files are missing newlines at EOF."""
+        # Create files without newlines
+        file1 = tmp_path / "file1.txt"
+        file1.write_bytes(b"content without newline")
+        file2 = tmp_path / "file2.py"
+        file2.write_bytes(b"print('hello')")
+
+        mock_get_files.return_value = [str(file1), str(file2)]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is False
+        assert "do not end with a newline" in result.error_message
+        assert str(file1) in result.error_message
+        assert str(file2) in result.error_message
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_empty_file(self, mock_get_files, tmp_path):
+        """Test validation with empty file (should pass)."""
+        empty_file = tmp_path / "empty.txt"
+        empty_file.write_text("")
+
+        mock_get_files.return_value = [str(empty_file)]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is True
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_skips_binary(self, mock_get_files, tmp_path):
+        """Test that binary files are skipped."""
+        # Create binary file without newline
+        binary_file = tmp_path / "image.png"
+        binary_file.write_bytes(b'\x89PNG\r\n\x1a\n\x00\x00\x00')
+
+        mock_get_files.return_value = [str(binary_file)]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is True  # Binary files are skipped
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_skips_symlinks(self, mock_get_files, tmp_path):
+        """Test that symlinks are skipped."""
+        # Create a real file and a symlink to it
+        real_file = tmp_path / "real.txt"
+        real_file.write_bytes(b"content without newline")
+
+        symlink = tmp_path / "link.txt"
+        symlink.symlink_to(real_file)
+
+        # Only check the symlink, not the real file
+        mock_get_files.return_value = [str(symlink)]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is True  # Symlinks are skipped
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_skips_deleted(self, mock_get_files):
+        """Test that deleted files (non-existent) are skipped."""
+        mock_get_files.return_value = ["/nonexistent/deleted.txt"]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is True  # Deleted files are skipped
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_mixed_files(self, mock_get_files, tmp_path):
+        """Test validation with mix of valid, invalid, and skipped files."""
+        # File with newline (valid)
+        good_file = tmp_path / "good.txt"
+        good_file.write_text("content\n")
+
+        # File without newline (invalid)
+        bad_file = tmp_path / "bad.txt"
+        bad_file.write_bytes(b"no newline")
+
+        # Binary file (skip)
+        binary_file = tmp_path / "binary.bin"
+        binary_file.write_bytes(b'\x00\x01\x02')
+
+        # Symlink (skip)
+        real_file = tmp_path / "real.txt"
+        real_file.write_text("content\n")
+        symlink = tmp_path / "link.txt"
+        symlink.symlink_to(real_file)
+
+        mock_get_files.return_value = [
+            str(good_file),
+            str(bad_file),
+            str(binary_file),
+            str(symlink),
+        ]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is False
+        # Only bad_file should be in the error
+        assert str(bad_file) in result.error_message
+        # Others should not be mentioned
+        assert str(good_file) not in result.error_message or "do not end" not in result.error_message
+        assert str(binary_file) not in result.error_message
+        assert str(symlink) not in result.error_message
 
 
 # ============================================================================

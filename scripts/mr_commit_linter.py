@@ -439,6 +439,110 @@ def validate_mr_description(mr_info: MergeRequestInfo) -> ValidationResult:
 
 
 # ============================================================================
+# FILE CONTENT VALIDATION
+# ============================================================================
+
+def is_binary_file(file_path: str) -> bool:
+    """
+    Check if a file is binary by looking for null bytes.
+
+    Args:
+        file_path: Path to file
+
+    Returns:
+        True if file appears to be binary
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            chunk = f.read(8192)
+            return b'\0' in chunk
+    except Exception:
+        return True  # If we can't read it, treat as binary
+
+
+def should_skip_newline_check(file_path: str) -> bool:
+    """
+    Determine if a file should be excluded from newline-at-EOF validation.
+
+    Files are excluded if they are:
+    - Non-existent (deleted files)
+    - Directories
+    - Symlinks (they don't have their own content)
+    - Binary files (newline convention doesn't apply)
+
+    Args:
+        file_path: Path to file to check
+
+    Returns:
+        True if file should be skipped from newline validation
+    """
+    # Skip if file doesn't exist (deleted)
+    if not os.path.exists(file_path):
+        logger.debug(f"Skipping non-existent file: {file_path}")
+        return True
+
+    # Skip directories
+    if os.path.isdir(file_path):
+        logger.debug(f"Skipping directory: {file_path}")
+        return True
+
+    # Skip symlinks - they don't have their own content
+    if os.path.islink(file_path):
+        logger.debug(f"Skipping symlink: {file_path}")
+        return True
+
+    # Skip binary files - newline convention doesn't apply
+    if is_binary_file(file_path):
+        logger.debug(f"Skipping binary file: {file_path}")
+        return True
+
+    return False
+
+
+def validate_files_newline_at_eof(commit: CommitInfo) -> ValidationResult:
+    """
+    Validate that text files end with a newline character.
+
+    Skips symlinks, binary files, directories, and deleted files.
+
+    Args:
+        commit: Commit information
+
+    Returns:
+        ValidationResult with list of files missing newline at EOF
+    """
+    modified_files = get_commit_modified_files(commit.commit_id)
+    errors = []
+
+    for file_path in modified_files:
+        # Skip files that should be excluded from validation
+        if should_skip_newline_check(file_path):
+            continue
+
+        # Check if file ends with newline
+        try:
+            with open(file_path, 'rb') as f:
+                content = f.read()
+                # Only check non-empty files
+                if len(content) > 0 and not content.endswith(b'\n'):
+                    errors.append(file_path)
+        except Exception as e:
+            logger.warning(f"Could not read {file_path}: {e}")
+            continue
+
+    if errors:
+        files_str = '\n  '.join(errors)
+        return ValidationResult.fail(
+            f"ERROR: Commit {commit.commit_id}: the following files do not end with a newline:\n"
+            f"  {files_str}\n"
+            f"Tip: Most editors can be configured to automatically add newlines at EOF.\n"
+            f"{POLICY_MESSAGE}"
+        )
+
+    return ValidationResult.ok()
+
+
+# ============================================================================
 # INTERNAL FILE VALIDATION
 # ============================================================================
 
@@ -588,6 +692,11 @@ def validate_commit(commit: CommitInfo) -> List[str]:
         errors.append(result.error_message)
 
     result = validate_commit_body_length(commit)
+    if not result.success:
+        errors.append(result.error_message)
+
+    # Validate that text files end with newline
+    result = validate_files_newline_at_eof(commit)
     if not result.success:
         errors.append(result.error_message)
 
