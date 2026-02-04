@@ -343,7 +343,7 @@ def validate_commit_title(commit: CommitInfo) -> ValidationResult:
         return ValidationResult.ok()
 
     return ValidationResult.fail(
-        f"ERROR: Commit {commit.commit_id}: title must begin with a valid Jira ticket "
+        f"ERROR [COMMIT {commit.commit_id}]: title must begin with a valid Jira ticket "
         f"(format: PROJECT-123, e.g., RHELAI-1234) or INTERNAL.\n{POLICY_MESSAGE}"
     )
 
@@ -362,7 +362,7 @@ def validate_commit_signed_off_by(commit: CommitInfo) -> ValidationResult:
         return ValidationResult.ok()
 
     return ValidationResult.fail(
-        f"ERROR: Commit {commit.commit_id}: commit does not contain a Signed-off-by: tag.\n"
+        f"ERROR [COMMIT {commit.commit_id}]: commit does not contain a Signed-off-by: tag.\n"
         f"{POLICY_MESSAGE}"
     )
 
@@ -387,7 +387,7 @@ def validate_commit_body_length(commit: CommitInfo) -> ValidationResult:
         return ValidationResult.ok()
 
     return ValidationResult.fail(
-        f"ERROR: Commit {commit.commit_id}: description must be at least {MIN_COMMIT_BODY_LINES} "
+        f"ERROR [COMMIT {commit.commit_id}]: description must be at least {MIN_COMMIT_BODY_LINES} "
         f"lines in length (a description, an empty line, and a Signed-off-by:).\n{POLICY_MESSAGE}"
     )
 
@@ -409,7 +409,7 @@ def validate_mr_title(mr_info: MergeRequestInfo) -> ValidationResult:
         return ValidationResult.ok()
 
     return ValidationResult.fail(
-        f"ERROR: Merge Request {mr_info.iid}: title must begin with a valid Jira ticket "
+        f"ERROR [MERGE REQUEST {mr_info.iid}]: title must begin with a valid Jira ticket "
         f"(format: PROJECT-123, e.g., RHELAI-1234) or INTERNAL.\n{POLICY_MESSAGE}"
     )
 
@@ -426,12 +426,12 @@ def validate_mr_description(mr_info: MergeRequestInfo) -> ValidationResult:
     """
     if mr_info.description is None:
         return ValidationResult.fail(
-            f"ERROR: Merge Request {mr_info.iid}: description cannot be empty.\n{POLICY_MESSAGE}"
+            f"ERROR [MERGE REQUEST {mr_info.iid}]: description cannot be empty.\n{POLICY_MESSAGE}"
         )
 
     if not contains_signed_off_by(mr_info.description):
         return ValidationResult.fail(
-            f"ERROR: Merge Request {mr_info.iid}: description does not contain a "
+            f"ERROR [MERGE REQUEST {mr_info.iid}]: description does not contain a "
             f"Signed-off-by: tag.\n{POLICY_MESSAGE}"
         )
 
@@ -533,7 +533,7 @@ def validate_files_newline_at_eof(commit: CommitInfo) -> ValidationResult:
     if errors:
         files_str = '\n  '.join(errors)
         return ValidationResult.fail(
-            f"ERROR: Commit {commit.commit_id}: the following files do not end with a newline:\n"
+            f"ERROR [COMMIT {commit.commit_id}]: the following files do not end with a newline:\n"
             f"  {files_str}\n"
             f"Tip: Most editors can be configured to automatically add newlines at EOF.\n"
             f"{POLICY_MESSAGE}"
@@ -624,13 +624,13 @@ def validate_internal_commit_files(commit: CommitInfo) -> ValidationResult:
     for file_path in modified_files:
         if file_path == "config/linterignore":
             return ValidationResult.fail(
-                f"ERROR: commit {commit.commit_id} config/linterignore changes cannot be made "
+                f"ERROR [COMMIT {commit.commit_id}]: config/linterignore changes cannot be made "
                 f"with INTERNAL -- a JIRA must be used to modify this file.\n{POLICY_MESSAGE}"
             )
 
         if file_path not in allowed_files:
             return ValidationResult.fail(
-                f"ERROR: {file_path} is not in {linterignore_path}"
+                f"ERROR [COMMIT {commit.commit_id}]: {file_path} is not in {linterignore_path}"
             )
 
     return ValidationResult.ok()
