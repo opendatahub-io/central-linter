@@ -1,5 +1,7 @@
 variables:
   IMAGE_NAME: "quay.io/aipcc-cicd/central-linter"
+  # Use GitLab container registry for intermediate builds
+  BUILD_IMAGE_BASE: "${CI_REGISTRY}/${CI_PROJECT_PATH}/central-linter"
   CONTAINERFILE_PATH: "Containerfile"
   CONTEXT_DIR: "."
 
@@ -41,53 +43,19 @@ default:
   extends: .default_rules
   stage: build
   image: quay.io/podman/stable:latest
+  before_script:
+    # Login to GitLab container registry
+    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   script:
     - echo "Building image for ${ARCH}..."
     - podman build
         --format docker
-        --tag ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-${ARCH}
+        --tag ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH}
         --file ${CONTAINERFILE_PATH}
         ${CONTEXT_DIR}
-    - echo "Saving image to tarball..."
-    - mkdir -p images
-    - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-${ARCH} oci-archive:images/image-${ARCH}.tar
+    - echo "Pushing image to GitLab registry..."
+    - podman push ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH}
     - echo "Build complete for ${ARCH}"
-  artifacts:
-    paths:
-      - images/image-${ARCH}.tar
-    expire_in: 1 hour
-
-# Lint this repository using the newly built central-linter image
-lint:
-  extends: .default_rules
-  stage: lint
-  image: quay.io/podman/stable:latest
-  needs: ["build-amd64"]
-  dependencies:
-    - build-amd64
-  tags:
-    - aipcc-small-x86_64
-  before_script:
-    # Fetch main branch for mr-commit-linter to compare against
-    - git fetch origin main:main || true
-  script:
-    - echo "Loading newly built image from tarball..."
-    - IMAGE_ID=$(podman load -i images/image-amd64.tar | awk '/Loaded image:/ {print $NF}')
-    - echo "Running linter with newly built image..."
-    - |
-      podman run --rm \
-        -v ${CI_PROJECT_DIR}:/workspace:Z \
-        -w /workspace \
-        -e CI_PROJECT_ID \
-        -e CI_MERGE_REQUEST_IID \
-        -e CI_API_V4_URL \
-        -e CI_MERGE_REQUEST_TITLE \
-        -e CI_MERGE_REQUEST_DESCRIPTION \
-        -e CI_MERGE_REQUEST_DIFF_BASE_SHA \
-        -e GITLAB_API_TOKEN \
-        -e GITLAB_USER_LOGIN \
-        -e GITLAB_USER_NAME \
-        ${IMAGE_ID} make linter-central
 
 # Build for amd64 (uses native amd64 runner)
 build-amd64:
@@ -105,18 +73,54 @@ build-arm64:
   variables:
     ARCH: arm64
 
+# Lint this repository using the newly built central-linter image
+lint:
+  extends: .default_rules
+  stage: lint
+  image: quay.io/podman/stable:latest
+  needs: ["build-amd64"]
+  tags:
+    - aipcc-small-x86_64
+  before_script:
+    # Login to GitLab container registry
+    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    # Fetch main branch for mr-commit-linter to compare against
+    - git fetch origin main:main || true
+  script:
+    - echo "Pulling newly built image from registry..."
+    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
+    - echo "Running linter with newly built image..."
+    - |
+      podman run --rm \
+        -v ${CI_PROJECT_DIR}:/workspace:Z \
+        -w /workspace \
+        -e CI_PROJECT_ID \
+        -e CI_MERGE_REQUEST_IID \
+        -e CI_API_V4_URL \
+        -e CI_MERGE_REQUEST_TITLE \
+        -e CI_MERGE_REQUEST_DESCRIPTION \
+        -e CI_MERGE_REQUEST_DIFF_BASE_SHA \
+        -e GITLAB_API_TOKEN \
+        -e GITLAB_USER_LOGIN \
+        -e GITLAB_USER_NAME \
+        ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64 make linter-central
+
 # Template for testing images
 .test_template:
   extends: .default_rules
   stage: test
   image: quay.io/podman/stable:latest
+  before_script:
+    # Login to GitLab container registry
+    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   script:
-    - echo "Testing image for ${ARCH} from tarball..."
+    - echo "Pulling image for ${ARCH} from registry..."
+    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH}
+    - echo "Testing image for ${ARCH}..."
     - |
-      IMAGE_ID=$(podman load -i images/image-${ARCH}.tar | awk '/Loaded image:/ {print $NF}')
-      podman run --rm ${IMAGE_ID} ruff --version
-      podman run --rm ${IMAGE_ID} yamllint --version
-      podman run --rm ${IMAGE_ID} renovate-config-validator
+      podman run --rm ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH} ruff --version
+      podman run --rm ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH} yamllint --version
+      podman run --rm ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH} renovate-config-validator
     - echo "Test passed for ${ARCH}"
 
 # Test amd64 image
@@ -127,8 +131,6 @@ test-amd64:
   needs: ["build-amd64"]
   variables:
     ARCH: amd64
-  dependencies:
-    - build-amd64
 
 # Test arm64 image
 test-arm64:
@@ -138,8 +140,6 @@ test-arm64:
   needs: ["build-arm64"]
   variables:
     ARCH: arm64
-  dependencies:
-    - build-arm64
 
 # Run unit tests for mr_commit_linter
 test-unit:
@@ -149,12 +149,13 @@ test-unit:
   tags:
     - aipcc-small-x86_64
   needs: ["build-amd64"]
-  dependencies:
-    - build-amd64
+  before_script:
+    # Login to GitLab container registry
+    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   script:
     - echo "Running unit tests for mr_commit_linter..."
-    - IMAGE_ID=$(podman load -i images/image-amd64.tar | awk '/Loaded image:/ {print $NF}')
-    - podman run --rm -v ${CI_PROJECT_DIR}:/workspace:Z -w /workspace ${IMAGE_ID} pytest tests/ -v
+    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
+    - podman run --rm -v ${CI_PROJECT_DIR}:/workspace:Z -w /workspace ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64 pytest tests/ -v
     - echo "Unit tests passed"
 
 # Push arch-specific images and create multi-arch manifests
@@ -163,13 +164,13 @@ push:
   stage: push
   image: quay.io/podman/stable:latest
   needs: ["build-amd64", "build-arm64", "test-amd64", "test-arm64", "test-unit"]
-  dependencies:
-    - build-amd64
-    - build-arm64
   before_script:
     - !reference [.vault_auth, before_script]
     - |
       set -e
+      # Login to GitLab container registry
+      echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+
       # Fetch Quay credentials from vault
       podman run --rm --cap-add IPC_LOCK \
         -e VAULT_ADDR=$VAULT_ADDR \
@@ -184,14 +185,13 @@ push:
       # Login to Quay
       echo "$QUAY_PASSWORD" | podman login -u "$QUAY_USERNAME" --password-stdin quay.io
   script:
-    - echo "Loading arch-specific images from tarballs..."
-    - |
-      AMD64_ID=$(podman load -i images/image-amd64.tar | awk '/Loaded image:/ {print $NF}')
-      ARM64_ID=$(podman load -i images/image-arm64.tar | awk '/Loaded image:/ {print $NF}')
-    - echo "Tagging images with proper names..."
-    - podman tag ${AMD64_ID} ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64
-    - podman tag ${ARM64_ID} ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
-    - echo "Pushing arch-specific images..."
+    - echo "Pulling arch-specific images from GitLab registry..."
+    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
+    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-arm64
+    - echo "Tagging images for Quay..."
+    - podman tag ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64 ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64
+    - podman tag ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-arm64 ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
+    - echo "Pushing arch-specific images to Quay..."
     - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64
     - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
     - |
