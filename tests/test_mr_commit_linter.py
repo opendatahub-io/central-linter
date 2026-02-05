@@ -16,6 +16,7 @@ from scripts.mr_commit_linter import (
     contains_signed_off_by,
     has_jira_ticket,
     has_internal_keyword,
+    validate_title_format,
     validate_commit_title,
     validate_commit_signed_off_by,
     validate_commit_body_length,
@@ -29,6 +30,8 @@ from scripts.mr_commit_linter import (
     get_mr_commits_from_api,
     validate_all_commits,
     MIN_COMMIT_BODY_LINES,
+    MIN_TITLE_DESCRIPTION_LENGTH,
+    MIN_TITLE_DESCRIPTION_WORDS,
 )
 
 
@@ -82,6 +85,155 @@ class TestPatternMatching:
 
 
 # ============================================================================
+# TITLE FORMAT VALIDATION TESTS
+# ============================================================================
+
+class TestValidateTitleFormat:
+    """Tests for strict title formatting validation."""
+
+    # Valid formats
+    def test_valid_format_with_jira_ticket(self):
+        """Test valid format with JIRA ticket."""
+        result = validate_title_format("RHELAI-1234: Fix authentication bug")
+        assert result.success is True
+        assert result.error_message is None
+
+    def test_valid_format_with_internal(self):
+        """Test valid format with INTERNAL keyword."""
+        result = validate_title_format("INTERNAL: Update documentation")
+        assert result.success is True
+
+    def test_valid_format_multi_ticket(self):
+        """Test valid format with multiple comma-separated tickets."""
+        result = validate_title_format("AIPCC-1, AIPCC-2: Fix multiple bugs")
+        assert result.success is True
+
+    def test_valid_format_short_but_three_words(self):
+        """Test valid format with short description but 3 words."""
+        result = validate_title_format("AB-1: Fix the bug")
+        assert result.success is True
+
+    def test_valid_format_long_description(self):
+        """Test valid format with description >= 10 characters."""
+        result = validate_title_format("RHELAI-1: A very long description")
+        assert result.success is True
+
+    def test_valid_format_exactly_ten_chars(self):
+        """Test valid format with exactly 10 character description."""
+        result = validate_title_format("RHELAI-1: 1234567890")
+        assert result.success is True
+
+    def test_valid_format_exactly_three_words(self):
+        """Test valid format with exactly 3 words."""
+        result = validate_title_format("RHELAI-1: One two three")
+        assert result.success is True
+
+    # Invalid formats - missing ticket/keyword
+    def test_invalid_no_ticket_or_internal(self):
+        """Test invalid format without JIRA ticket or INTERNAL."""
+        result = validate_title_format("Fix authentication bug")
+        assert result.success is False
+        assert "must start with a Jira ticket" in result.error_message
+
+    # Invalid formats - missing colon
+    def test_invalid_missing_colon(self):
+        """Test invalid format without colon separator."""
+        result = validate_title_format("RHELAI-1234 Fix authentication bug")
+        assert result.success is False
+        assert "must have a colon" in result.error_message
+        assert "separating the ticket ID" in result.error_message
+
+    # Invalid formats - spacing issues with colon
+    def test_invalid_no_space_after_colon(self):
+        """Test invalid format with no space after colon."""
+        result = validate_title_format("RHELAI-1234:Fix bug")
+        assert result.success is False
+        assert "exactly one space after colon" in result.error_message
+
+    def test_invalid_multiple_spaces_after_colon(self):
+        """Test invalid format with multiple spaces after colon."""
+        result = validate_title_format("RHELAI-1234:  Fix bug")
+        assert result.success is False
+        assert "exactly one space after colon" in result.error_message
+        assert "multiple spaces" in result.error_message
+
+    def test_invalid_space_before_colon(self):
+        """Test invalid format with space before colon."""
+        result = validate_title_format("RHELAI-1234 : Fix bug")
+        assert result.success is False
+        assert "must not have space before colon" in result.error_message
+
+    # Invalid formats - comma-separated tickets
+    def test_invalid_no_space_after_comma(self):
+        """Test invalid format with comma-separated tickets without space."""
+        result = validate_title_format("RHELAI-1,RHELAI-2: Fix bug")
+        assert result.success is False
+        assert "must have space after comma" in result.error_message
+
+    def test_invalid_double_comma(self):
+        """Test invalid format with double comma."""
+        result = validate_title_format("RHELAI-1,, RHELAI-2: Fix bug")
+        assert result.success is False
+        assert "must have space after comma" in result.error_message
+
+    # Invalid formats - description issues
+    def test_invalid_empty_description(self):
+        """Test invalid format with empty description after colon."""
+        result = validate_title_format("RHELAI-1234: ")
+        assert result.success is False
+        assert "must have a description after the colon" in result.error_message
+
+    def test_invalid_only_whitespace_description(self):
+        """Test invalid format with only whitespace as description."""
+        result = validate_title_format("RHELAI-1234:    \t  ")
+        assert result.success is False
+        assert "multiple spaces" in result.error_message or "must have a description" in result.error_message
+
+    def test_invalid_description_too_short(self):
+        """Test invalid format with description too short (< 10 chars and < 3 words)."""
+        result = validate_title_format("RHELAI-1234: Fix")
+        assert result.success is False
+        assert "description is too short" in result.error_message
+        assert f"at least {MIN_TITLE_DESCRIPTION_LENGTH} characters" in result.error_message
+        assert f"at least {MIN_TITLE_DESCRIPTION_WORDS} words" in result.error_message
+
+    def test_invalid_description_two_words_short_length(self):
+        """Test invalid format with 2 words and short length."""
+        result = validate_title_format("RHELAI-1: Fix it")
+        assert result.success is False
+        assert "description is too short" in result.error_message
+
+    def test_invalid_description_one_short_word(self):
+        """Test invalid format with 1 word that is < 10 characters."""
+        result = validate_title_format("RHELAI-1: Update")
+        assert result.success is False
+        assert "description is too short" in result.error_message
+
+    # Edge cases
+    def test_valid_internal_with_proper_format(self):
+        """Test INTERNAL keyword follows same formatting rules."""
+        result = validate_title_format("INTERNAL: Update the configuration file")
+        assert result.success is True
+
+    def test_invalid_internal_no_space_after_colon(self):
+        """Test INTERNAL without space after colon."""
+        result = validate_title_format("INTERNAL:Update config")
+        assert result.success is False
+        assert "exactly one space after colon" in result.error_message
+
+    def test_valid_multiple_tickets_proper_spacing(self):
+        """Test multiple tickets with proper spacing."""
+        result = validate_title_format("RHELAI-1, RHOAIENG-2, AIPCC-3: Fix multiple issues")
+        assert result.success is True
+
+    def test_invalid_multiple_tickets_mixed_spacing(self):
+        """Test multiple tickets with inconsistent spacing."""
+        result = validate_title_format("RHELAI-1, RHOAIENG-2,AIPCC-3: Fix bugs")
+        assert result.success is False
+        assert "must have space after comma" in result.error_message
+
+
+# ============================================================================
 # COMMIT VALIDATION TESTS
 # ============================================================================
 
@@ -110,7 +262,7 @@ class TestCommitValidation:
         assert result.success is True
 
     def test_validate_commit_title_invalid(self):
-        """Test commit title validation with invalid title."""
+        """Test commit title validation with invalid title (no ticket)."""
         commit = CommitInfo(
             commit_id="abc123",
             title="Fix bug",
@@ -118,8 +270,30 @@ class TestCommitValidation:
         )
         result = validate_commit_title(commit)
         assert result.success is False
-        assert "must begin with a valid Jira ticket" in result.error_message
+        assert "must start with a Jira ticket" in result.error_message
         assert result.error_message is not None
+
+    def test_validate_commit_title_invalid_no_colon(self):
+        """Test commit title validation missing colon separator."""
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234 Fix bug",
+            body="Description\n\nSigned-off-by: Dev"
+        )
+        result = validate_commit_title(commit)
+        assert result.success is False
+        assert "must have a colon" in result.error_message
+
+    def test_validate_commit_title_invalid_no_space_after_colon(self):
+        """Test commit title validation with no space after colon."""
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234:Fix bug",
+            body="Description\n\nSigned-off-by: Dev"
+        )
+        result = validate_commit_title(commit)
+        assert result.success is False
+        assert "exactly one space after colon" in result.error_message
 
     def test_validate_commit_signed_off_by_present(self):
         """Test Signed-off-by validation when tag is present."""
@@ -194,7 +368,7 @@ class TestMergeRequestValidation:
         assert result.success is True
 
     def test_validate_mr_title_invalid(self):
-        """Test MR title validation with invalid title."""
+        """Test MR title validation with invalid title (no ticket)."""
         mr_info = MergeRequestInfo(
             iid="123",
             title="Feature implementation",
@@ -203,7 +377,31 @@ class TestMergeRequestValidation:
         )
         result = validate_mr_title(mr_info)
         assert result.success is False
-        assert "must begin with a valid Jira ticket" in result.error_message
+        assert "must start with a Jira ticket" in result.error_message
+
+    def test_validate_mr_title_invalid_no_colon(self):
+        """Test MR title validation missing colon separator."""
+        mr_info = MergeRequestInfo(
+            iid="123",
+            title="RHELAI-1234 Feature implementation",
+            description="Description\n\nSigned-off-by: Dev",
+            author="developer"
+        )
+        result = validate_mr_title(mr_info)
+        assert result.success is False
+        assert "must have a colon" in result.error_message
+
+    def test_validate_mr_title_invalid_short_description(self):
+        """Test MR title validation with too short description."""
+        mr_info = MergeRequestInfo(
+            iid="123",
+            title="RHELAI-1234: Fix",
+            description="Description\n\nSigned-off-by: Dev",
+            author="developer"
+        )
+        result = validate_mr_title(mr_info)
+        assert result.success is False
+        assert "description is too short" in result.error_message
 
     def test_validate_mr_description_valid(self):
         """Test MR description validation with valid description."""
