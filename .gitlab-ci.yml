@@ -74,7 +74,20 @@ lint:
     - echo "Loading newly built image from tarball..."
     - IMAGE_ID=$(podman load -i images/image-amd64.tar | awk '/Loaded image:/ {print $NF}')
     - echo "Running linter with newly built image..."
-    - podman run --rm -v ${CI_PROJECT_DIR}:/workspace:Z -w /workspace ${IMAGE_ID} make linter-central
+    - |
+      podman run --rm \
+        -v ${CI_PROJECT_DIR}:/workspace:Z \
+        -w /workspace \
+        -e CI_PROJECT_ID \
+        -e CI_MERGE_REQUEST_IID \
+        -e CI_API_V4_URL \
+        -e CI_MERGE_REQUEST_TITLE \
+        -e CI_MERGE_REQUEST_DESCRIPTION \
+        -e CI_MERGE_REQUEST_DIFF_BASE_SHA \
+        -e GITLAB_API_TOKEN \
+        -e GITLAB_USER_LOGIN \
+        -e GITLAB_USER_NAME \
+        ${IMAGE_ID} make linter-central
 
 # Build for amd64 (uses native amd64 runner)
 build-amd64:

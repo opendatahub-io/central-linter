@@ -85,13 +85,25 @@ class GitLabConfig:
 
     @classmethod
     def from_environment(cls) -> "GitLabConfig":
-        """Create configuration from environment variables."""
+        """Create configuration from environment variables.
+
+        For base_sha, checks in order:
+        1. CI_MERGE_REQUEST_DIFF_BASE_SHA (GitLab CI)
+        2. LINT_BASE_BRANCH (local testing override)
+        3. "main" (default)
+        """
+        base_sha = (
+            os.getenv("CI_MERGE_REQUEST_DIFF_BASE_SHA") or
+            os.getenv("LINT_BASE_BRANCH") or
+            "main"
+        )
+
         return cls(
             project_id=os.getenv("CI_PROJECT_ID"),
             mr_iid=os.getenv("CI_MERGE_REQUEST_IID"),
             api_url=os.getenv("CI_API_V4_URL"),
             api_token=os.getenv("GITLAB_API_TOKEN"),
-            base_sha=os.getenv("CI_MERGE_REQUEST_DIFF_BASE_SHA", "main"),
+            base_sha=base_sha,
         )
 
 
@@ -281,6 +293,45 @@ def get_mr_author(config: GitLabConfig) -> Optional[str]:
         logger.warning(f"Could not fetch MR author: {e}")
 
     return None
+
+
+def get_mr_commits_from_api(config: GitLabConfig) -> Optional[List[str]]:
+    """
+    Fetch the actual list of commit SHAs in the MR from GitLab API.
+
+    This returns only the commits that are part of the MR, not commits
+    from main that were merged after the feature branch was created.
+
+    Args:
+        config: GitLab configuration
+
+    Returns:
+        List of commit SHAs in the MR, or None if unavailable
+    """
+    if not config.project_id or not config.mr_iid:
+        return None
+
+    if not config.api_url or not config.api_token:
+        logger.warning("GitLab API credentials not available, falling back to git log")
+        return None
+
+    headers = {"PRIVATE-TOKEN": config.api_token}
+    url = f"{config.api_url}/projects/{config.project_id}/merge_requests/{config.mr_iid}/commits"
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            commits_data = response.json()
+            # Return commit SHAs in reverse order (oldest first, like git log)
+            commit_shas = [commit["id"] for commit in reversed(commits_data)]
+            logger.info(f"Fetched {len(commit_shas)} commits from GitLab API for MR {config.mr_iid}")
+            return commit_shas
+        else:
+            logger.warning(f"API request for MR commits failed with status {response.status_code}")
+            return None
+    except requests.RequestException as e:
+        logger.warning(f"Could not fetch MR commits from API: {e}")
+        return None
 
 
 # ============================================================================
@@ -703,29 +754,54 @@ def validate_commit(commit: CommitInfo) -> List[str]:
     return errors
 
 
-def validate_all_commits(base_sha: str) -> List[str]:
+def validate_all_commits(config: GitLabConfig) -> List[str]:
     """
     Validate all commits in the merge request.
+
+    Uses GitLab API to get the actual MR commits when available,
+    otherwise falls back to git log with base_sha.
+
+    Args:
+        config: GitLab configuration
 
     Returns:
         List of all error messages from all commits (empty if all pass)
     """
-    commit_lines = get_commits_in_range(base_sha)
+    # Try to get commits from GitLab API first (more accurate for MRs)
+    commit_shas = get_mr_commits_from_api(config)
 
-    if not commit_lines:
+    if commit_shas is not None:
+        # Using GitLab API - we have the exact commits in the MR
+        commit_ids = commit_shas
+        logger.info("Using GitLab API to get MR commits (only commits in this MR will be validated)")
+    else:
+        # Fallback to git log (for local development or when API unavailable)
+        logger.info("Using git log to get commits (falling back from GitLab API)")
+        commit_lines = get_commits_in_range(config.base_sha)
+
+        if not commit_lines:
+            logger.info("No commits to validate")
+            return []
+
+        commit_ids = [line.split(" ")[0] for line in commit_lines]
+
+    if not commit_ids:
         logger.info("No commits to validate")
         return []
 
     mr_iid = os.getenv("CI_MERGE_REQUEST_IID", "(local branch)")
     logger.info(f"The commits in Merge Request {mr_iid} are:")
-    logger.info("\n".join(commit_lines))
+
+    # Display commit info
+    for commit_id in commit_ids:
+        success, title = run_git_command(["git", "log", "-1", commit_id, "--format=%h %s"])
+        if success:
+            logger.info(title.strip())
     logger.info("---")
 
     all_errors = []
-    for commit_line in commit_lines:
-        commit_id = commit_line.split(" ")[0]
+    for commit_id in commit_ids:
         commit = get_commit_info(commit_id)
-
         errors = validate_commit(commit)
         all_errors.extend(errors)
 
@@ -779,7 +855,7 @@ def main() -> int:
     # Collect all errors from both commits and merge request
     all_errors = []
 
-    commit_errors = validate_all_commits(config.base_sha)
+    commit_errors = validate_all_commits(config)
     all_errors.extend(commit_errors)
 
     mr_errors = validate_merge_request()

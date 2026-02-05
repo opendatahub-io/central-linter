@@ -26,6 +26,8 @@ from scripts.mr_commit_linter import (
     is_binary_file,
     should_skip_newline_check,
     validate_files_newline_at_eof,
+    get_mr_commits_from_api,
+    validate_all_commits,
     MIN_COMMIT_BODY_LINES,
 )
 
@@ -269,6 +271,32 @@ class TestDataStructures:
             assert config.project_id is None
             assert config.mr_iid is None
             assert config.base_sha == 'main'  # Default value
+
+    def test_gitlab_config_lint_base_branch(self):
+        """Test GitLabConfig with LINT_BASE_BRANCH for local testing."""
+        with patch.dict('os.environ', {
+            'LINT_BASE_BRANCH': 'develop',
+        }, clear=True):
+            config = GitLabConfig.from_environment()
+            assert config.base_sha == 'develop'
+
+    def test_gitlab_config_priority_ci_over_lint_base_branch(self):
+        """Test that CI_MERGE_REQUEST_DIFF_BASE_SHA takes priority over LINT_BASE_BRANCH."""
+        with patch.dict('os.environ', {
+            'CI_MERGE_REQUEST_DIFF_BASE_SHA': 'abc123',
+            'LINT_BASE_BRANCH': 'develop',
+        }, clear=True):
+            config = GitLabConfig.from_environment()
+            # CI variable should take priority
+            assert config.base_sha == 'abc123'
+
+    def test_gitlab_config_lint_base_branch_fallback(self):
+        """Test that LINT_BASE_BRANCH is used when CI variable is not set."""
+        with patch.dict('os.environ', {
+            'LINT_BASE_BRANCH': 'release/v1.0',
+        }, clear=True):
+            config = GitLabConfig.from_environment()
+            assert config.base_sha == 'release/v1.0'
 
     def test_validation_result_ok(self):
         """Test ValidationResult.ok() factory method."""
@@ -541,6 +569,206 @@ class TestNewlineAtEOF:
         assert str(good_file) not in result.error_message or "do not end" not in result.error_message
         assert str(binary_file) not in result.error_message
         assert str(symlink) not in result.error_message
+
+
+# ============================================================================
+# GITLAB API TESTS
+# ============================================================================
+
+class TestGitLabAPI:
+    """Tests for GitLab API functions."""
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_get_mr_commits_from_api_success(self, mock_get):
+        """Test fetching MR commits from GitLab API successfully."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [
+            {"id": "abc123", "title": "RHELAI-1234: Third commit"},
+            {"id": "def456", "title": "RHELAI-1235: Second commit"},
+            {"id": "ghi789", "title": "RHELAI-1236: First commit"},
+        ]
+        mock_get.return_value = mock_response
+
+        config = GitLabConfig(
+            project_id="12345",
+            mr_iid="678",
+            api_url="https://gitlab.example.com/api/v4",
+            api_token="secret-token",
+            base_sha="main"
+        )
+
+        result = get_mr_commits_from_api(config)
+
+        # Should return commits in reverse order (oldest first)
+        assert result == ["ghi789", "def456", "abc123"]
+        mock_get.assert_called_once_with(
+            "https://gitlab.example.com/api/v4/projects/12345/merge_requests/678/commits",
+            headers={"PRIVATE-TOKEN": "secret-token"},
+            timeout=10
+        )
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_get_mr_commits_from_api_failure(self, mock_get):
+        """Test handling of API request failure."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_get.return_value = mock_response
+
+        config = GitLabConfig(
+            project_id="12345",
+            mr_iid="678",
+            api_url="https://gitlab.example.com/api/v4",
+            api_token="secret-token",
+            base_sha="main"
+        )
+
+        result = get_mr_commits_from_api(config)
+        assert result is None
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_get_mr_commits_from_api_network_error(self, mock_get):
+        """Test handling of network errors."""
+        import requests
+        mock_get.side_effect = requests.RequestException("Connection timeout")
+
+        config = GitLabConfig(
+            project_id="12345",
+            mr_iid="678",
+            api_url="https://gitlab.example.com/api/v4",
+            api_token="secret-token",
+            base_sha="main"
+        )
+
+        result = get_mr_commits_from_api(config)
+        assert result is None
+
+    def test_get_mr_commits_from_api_missing_config(self):
+        """Test that function returns None when config is incomplete."""
+        # Missing MR IID
+        config = GitLabConfig(
+            project_id="12345",
+            mr_iid=None,
+            api_url="https://gitlab.example.com/api/v4",
+            api_token="secret-token",
+            base_sha="main"
+        )
+        assert get_mr_commits_from_api(config) is None
+
+        # Missing API token
+        config = GitLabConfig(
+            project_id="12345",
+            mr_iid="678",
+            api_url="https://gitlab.example.com/api/v4",
+            api_token=None,
+            base_sha="main"
+        )
+        assert get_mr_commits_from_api(config) is None
+
+
+class TestValidateAllCommits:
+    """Tests for validate_all_commits function."""
+
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch('scripts.mr_commit_linter.get_commit_info')
+    @patch('scripts.mr_commit_linter.validate_commit')
+    @patch('scripts.mr_commit_linter.run_git_command')
+    @patch.dict('os.environ', {'CI_MERGE_REQUEST_IID': '123'})
+    def test_validate_all_commits_uses_api(self, mock_git, mock_validate, mock_get_info, mock_api):
+        """Test that validate_all_commits uses GitLab API when available."""
+        # Mock API returning commit SHAs
+        mock_api.return_value = ["abc123", "def456"]
+
+        # Mock git command for displaying commit info
+        mock_git.return_value = (True, "abc123 RHELAI-1234: Commit 1")
+
+        # Mock commit info
+        mock_get_info.return_value = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        # Mock validation returning no errors
+        mock_validate.return_value = []
+
+        config = GitLabConfig(
+            project_id="12345",
+            mr_iid="678",
+            api_url="https://gitlab.example.com/api/v4",
+            api_token="secret-token",
+            base_sha="main"
+        )
+
+        errors = validate_all_commits(config)
+
+        # Should use API
+        mock_api.assert_called_once_with(config)
+        assert errors == []
+
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch('scripts.mr_commit_linter.get_commits_in_range')
+    @patch('scripts.mr_commit_linter.get_commit_info')
+    @patch('scripts.mr_commit_linter.validate_commit')
+    @patch('scripts.mr_commit_linter.run_git_command')
+    @patch.dict('os.environ', {'CI_MERGE_REQUEST_IID': '123'})
+    def test_validate_all_commits_fallback_to_git_log(self, mock_git, mock_validate,
+                                                       mock_get_info, mock_get_range, mock_api):
+        """Test that validate_all_commits falls back to git log when API unavailable."""
+        # Mock API returning None (unavailable)
+        mock_api.return_value = None
+
+        # Mock git log returning commits
+        mock_get_range.return_value = [
+            "abc123 RHELAI-1234: Commit 1",
+            "def456 RHELAI-1235: Commit 2"
+        ]
+
+        # Mock git command for displaying commit info
+        mock_git.return_value = (True, "abc123 RHELAI-1234: Commit 1")
+
+        # Mock commit info
+        mock_get_info.return_value = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        # Mock validation returning no errors
+        mock_validate.return_value = []
+
+        config = GitLabConfig(
+            project_id=None,
+            mr_iid=None,
+            api_url=None,
+            api_token=None,
+            base_sha="main"
+        )
+
+        errors = validate_all_commits(config)
+
+        # Should fallback to git log
+        mock_api.assert_called_once_with(config)
+        mock_get_range.assert_called_once_with("main")
+        assert errors == []
+
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {'CI_MERGE_REQUEST_IID': '123'})
+    def test_validate_all_commits_no_commits(self, mock_api):
+        """Test validate_all_commits when there are no commits."""
+        # Mock API returning empty list
+        mock_api.return_value = []
+
+        config = GitLabConfig(
+            project_id="12345",
+            mr_iid="678",
+            api_url="https://gitlab.example.com/api/v4",
+            api_token="secret-token",
+            base_sha="main"
+        )
+
+        errors = validate_all_commits(config)
+        assert errors == []
 
 
 # ============================================================================
