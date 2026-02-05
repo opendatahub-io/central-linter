@@ -447,6 +447,27 @@ push               - Push image to quay.io
 clean              - Remove local images
 ```
 
+### Running Unit Tests
+
+Unit tests for the `mr_commit_linter` are located in `tests/` and run automatically in CI.
+
+```bash
+# Run tests locally (requires pytest)
+pip install pytest pytest-mock
+pytest tests/ -v
+
+# With coverage
+pip install pytest-cov
+pytest tests/ --cov=scripts.mr_commit_linter --cov-report=html
+```
+
+Tests run in the CI pipeline during the `test` stage. The `test-unit` job ensures:
+- All validation functions work correctly
+- Pattern matching is accurate
+- Error handling behaves as expected
+
+See `scripts/README.md` for more details on the test suite.
+
 ### Multi-Arch Image Structure
 
 After the CI/CD pipeline completes, the registry contains:
