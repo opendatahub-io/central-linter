@@ -29,6 +29,10 @@ from scripts.mr_commit_linter import (
     validate_files_newline_at_eof,
     get_mr_commits_from_api,
     validate_all_commits,
+    validate_commit,
+    is_merge_commit,
+    is_parent_merge_commit,
+    get_cherry_pick_source,
     MIN_COMMIT_BODY_LINES,
     MIN_TITLE_DESCRIPTION_LENGTH,
     MIN_TITLE_DESCRIPTION_WORDS,
@@ -231,6 +235,124 @@ class TestValidateTitleFormat:
         result = validate_title_format("RHELAI-1, RHOAIENG-2,AIPCC-3: Fix bugs")
         assert result.success is False
         assert "must have space after comma" in result.error_message
+
+
+# ============================================================================
+# MERGE COMMIT TESTS
+# ============================================================================
+
+class TestMergeCommit:
+    """Tests for merge commit detection and handling."""
+
+    @patch('scripts.mr_commit_linter.run_git_command')
+    def test_is_merge_commit_true(self, mock_git):
+        """Test detection of regular merge commit (2 parents)."""
+        # Output has 3 items: commit_sha parent1_sha parent2_sha
+        mock_git.return_value = (True, "abc123 def456 ghi789\n")
+        assert is_merge_commit("abc123") is True
+
+    @patch('scripts.mr_commit_linter.run_git_command')
+    def test_is_merge_commit_false(self, mock_git):
+        """Test detection of regular commit (1 parent)."""
+        # Output has 2 items: commit_sha parent1_sha
+        mock_git.return_value = (True, "abc123 def456\n")
+        assert is_merge_commit("abc123") is False
+
+    @patch('scripts.mr_commit_linter.run_git_command')
+    def test_is_merge_commit_git_failure(self, mock_git):
+        """Test handling of git command failure."""
+        mock_git.return_value = (False, "error")
+        assert is_merge_commit("abc123") is False
+
+    def test_get_cherry_pick_source_found(self):
+        """Test extracting source commit SHA from cherry-pick message."""
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Fix bug",
+            body="Description\n\n(cherry picked from commit def456789)"
+        )
+        assert get_cherry_pick_source(commit) == "def456789"
+
+    def test_get_cherry_pick_source_not_found(self):
+        """Test that non-cherry-picked commits return None."""
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Fix bug",
+            body="Description\n\nSigned-off-by: Dev"
+        )
+        assert get_cherry_pick_source(commit) is None
+
+    @patch('scripts.mr_commit_linter.is_merge_commit')
+    def test_is_parent_merge_commit_true(self, mock_is_merge):
+        """Test detection of cherry-picked merge commit."""
+        # Source commit is a merge (2+ parents)
+        mock_is_merge.return_value = True
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="Merge branch 'feature' into 'main'",
+            body="See merge request !123\n\n(cherry picked from commit def456789)"
+        )
+
+        assert is_parent_merge_commit(commit) is True
+        mock_is_merge.assert_called_once_with("def456789")
+
+    @patch('scripts.mr_commit_linter.is_merge_commit')
+    def test_is_parent_merge_commit_false(self, mock_is_merge):
+        """Test that cherry-picked regular commit is not detected as parent merge."""
+        # Source commit is NOT a merge (1 parent)
+        mock_is_merge.return_value = False
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Fix bug",
+            body="Description\n\nSigned-off-by: Dev\n\n(cherry picked from commit def456789)"
+        )
+
+        assert is_parent_merge_commit(commit) is False
+        mock_is_merge.assert_called_once_with("def456789")
+
+    def test_is_parent_merge_commit_not_cherry_picked(self):
+        """Test that non-cherry-picked commits return False."""
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Fix bug",
+            body="Description\n\nSigned-off-by: Dev"
+        )
+
+        assert is_parent_merge_commit(commit) is False
+
+    @patch('scripts.mr_commit_linter.should_skip_commit_validation')
+    def test_validate_commit_skips_merge(self, mock_should_skip):
+        """Test that merge commits are skipped during validation."""
+        mock_should_skip.return_value = True
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="Merge branch 'feature' into 'main'",
+            body="See merge request !123"  # No Signed-off-by
+        )
+
+        errors = validate_commit(commit)
+        assert errors == []  # No errors, merge commit was skipped
+        mock_should_skip.assert_called_once_with(commit)
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    @patch('scripts.mr_commit_linter.should_skip_commit_validation')
+    def test_validate_commit_validates_regular(self, mock_should_skip, mock_get_files):
+        """Test that regular commits are validated normally."""
+        mock_should_skip.return_value = False
+        mock_get_files.return_value = []  # No files modified
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Fix bug",
+            body="Short"  # Missing SOB, too short
+        )
+
+        errors = validate_commit(commit)
+        assert len(errors) > 0  # Should have validation errors
+        mock_should_skip.assert_called_once_with(commit)
 
 
 # ============================================================================
