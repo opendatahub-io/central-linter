@@ -1,10 +1,10 @@
 # Using ubi10/nodejs-22 as base image because Renovate requires Node.js 22
-ARG BASE_IMAGE=registry.access.redhat.com/ubi10/nodejs-22:10.0-1756152892
+ARG BASE_IMAGE=registry.access.redhat.com/ubi10/nodejs-22:10.0-1762806356
 FROM ${BASE_IMAGE}
 
 ARG RUFF_VERSION=0.14.2
-ARG YAMLLINT_VERSION=1.37.1
-ARG RENOVATE_VERSION=42.21.3
+ARG YAMLLINT_VERSION=1.38.0
+ARG RENOVATE_VERSION=43.4.0
 
 # Ensure we're running as root for package installation
 USER root
