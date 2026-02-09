@@ -4,7 +4,7 @@ FROM ${BASE_IMAGE}
 
 ARG RUFF_VERSION=0.14.2
 ARG YAMLLINT_VERSION=1.38.0
-ARG RENOVATE_VERSION=43.4.0
+ARG RENOVATE_VERSION=43.5.0
 
 # Ensure we're running as root for package installation
 USER root
