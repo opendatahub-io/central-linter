@@ -8,7 +8,7 @@ CONTEXT := .
 CONTAINER_MANAGER ?= podman
 
 # Linter configuration
-RUFF_ARGS ?= check .
+RUFF_ARGS ?= check . --no-cache
 RUFF_CONFIG ?=
 
 YAMLLINT_ARGS ?= .
@@ -47,7 +47,7 @@ linter-ruff-check:
 		if [ ! -f ".ruff.toml" ] && [ ! -f "ruff.toml" ] && [ ! -f "pyproject.toml" ]; then \
 			if [ -f "$$HOME/.config/ruff.toml" ]; then \
 				echo "Using shared ruff config from container..."; \
-				ruff check --config $$HOME/.config/ruff.toml $(RUFF_ARGS) || (echo "ERROR: Ruff check failed" && exit 1); \
+				ruff $(RUFF_ARGS) --config $$HOME/.config/ruff.toml || (echo "ERROR: Ruff check failed" && exit 1); \
 			else \
 				ruff $(RUFF_ARGS) || (echo "ERROR: Ruff check failed" && exit 1); \
 			fi; \

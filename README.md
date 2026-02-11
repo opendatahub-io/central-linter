@@ -47,11 +47,19 @@ The `linter-central` target executes:
 # Pull the image
 podman pull quay.io/aipcc-cicd/central-linter:latest
 
+# Run all linters using container's Makefile (recommended)
+podman run --rm -v $(pwd):/workspace:z -w /workspace \
+  quay.io/aipcc-cicd/central-linter:latest \
+  make -f /home/linter/Makefile linter-central
+
+# Or run individual linters directly
 # Run ruff check
-podman run --rm -v $(pwd):/workspace:z quay.io/aipcc-cicd/central-linter:latest ruff check /workspace
+podman run --rm -v $(pwd):/workspace:z -w /workspace \
+  quay.io/aipcc-cicd/central-linter:latest ruff check .
 
 # Run yamllint
-podman run --rm -v $(pwd):/workspace:z quay.io/aipcc-cicd/central-linter:latest yamllint /workspace
+podman run --rm -v $(pwd):/workspace:z -w /workspace \
+  quay.io/aipcc-cicd/central-linter:latest yamllint .
 
 # Validate Renovate config (auto-discovery)
 podman run --rm -v $(pwd):/workspace:z -w /workspace \
@@ -59,8 +67,9 @@ podman run --rm -v $(pwd):/workspace:z -w /workspace \
   renovate-config-validator
 
 # Validate specific Renovate config file
-podman run --rm -v $(pwd):/workspace:z quay.io/aipcc-cicd/central-linter:latest \
-  renovate-config-validator /workspace/renovate.json
+podman run --rm -v $(pwd):/workspace:z -w /workspace \
+  quay.io/aipcc-cicd/central-linter:latest \
+  renovate-config-validator renovate.json
 ```
 
 ### In GitLab CI/CD
@@ -78,13 +87,13 @@ See `examples/gitlab-ci-integration.yml` for complete examples. Basic usage:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
-# Option 1: Run all linters together
+# Option 1: Run all linters using container's Makefile
 lint-all:
   extends: .lint-template
   script:
-    - make linter-central
+    - make -f $HOME/Makefile linter-central
 
-# Option 2: Run linters individually
+# Option 2: Run linters individually (direct commands)
 ruff:
   extends: .lint-template
   script:
@@ -158,26 +167,23 @@ LINTER_MOUNT := -v $(CURDIR):/workspace:z -w /workspace
 LINTER_RUN := podman run --rm $(LINTER_MOUNT) $(LINTER_IMAGE)
 
 # Run central-linter (all linters)
-# IMPORTANT: Pass variables through for Use Case 3 (custom config locations)
+# Uses Makefile from container image for config auto-discovery
 .PHONY: linter-central
 linter-central:
-	$(LINTER_RUN) make linter-central \
-		RUFF_CONFIG="$(RUFF_CONFIG)" \
-		YAMLLINT_CONFIG="$(YAMLLINT_CONFIG)" \
-		RENOVATE_CONFIG="$(RENOVATE_CONFIG)"
+	$(LINTER_RUN) make -f /home/linter/Makefile linter-central
 
 # Run individual linters
 .PHONY: linter-ruff-check
 linter-ruff-check:
-	$(LINTER_RUN) make linter-ruff-check
+	$(LINTER_RUN) make -f /home/linter/Makefile linter-ruff-check
 
 .PHONY: linter-yamllint
 linter-yamllint:
-	$(LINTER_RUN) make linter-yamllint
+	$(LINTER_RUN) make -f /home/linter/Makefile linter-yamllint
 
 .PHONY: linter-renovate
 linter-renovate:
-	$(LINTER_RUN) make linter-renovate
+	$(LINTER_RUN) make -f /home/linter/Makefile linter-renovate
 
 # Auto-fix with ruff
 .PHONY: linter-fix
@@ -211,10 +217,7 @@ LINTER_RUN := podman run --rm $(LINTER_MOUNT) $(LINTER_IMAGE)
 
 .PHONY: linter-central
 linter-central:
-	$(LINTER_RUN) make linter-central \
-		RUFF_CONFIG="$(RUFF_CONFIG)" \
-		YAMLLINT_CONFIG="$(YAMLLINT_CONFIG)" \
-		RENOVATE_CONFIG="$(RENOVATE_CONFIG)"
+	$(LINTER_RUN) make -f /home/linter/Makefile linter-central
 
 # Integrate with existing linter target
 .PHONY: linter
@@ -301,7 +304,7 @@ Add to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 # Central-linter aliases
-alias linter-central='podman run --rm -v $(pwd):/workspace:z -w /workspace quay.io/aipcc-cicd/central-linter:latest make linter-central'
+alias linter-central='podman run --rm -v $(pwd):/workspace:z -w /workspace quay.io/aipcc-cicd/central-linter:latest make -f /home/linter/Makefile linter-central'
 alias linter-ruff='podman run --rm -v $(pwd):/workspace:z -w /workspace quay.io/aipcc-cicd/central-linter:latest ruff check .'
 alias linter-yamllint='podman run --rm -v $(pwd):/workspace:z -w /workspace quay.io/aipcc-cicd/central-linter:latest yamllint .'
 alias linter-fix='podman run --rm -v $(pwd):/workspace:z -w /workspace quay.io/aipcc-cicd/central-linter:latest ruff check --fix . && podman run --rm -v $(pwd):/workspace:z -w /workspace quay.io/aipcc-cicd/central-linter:latest ruff format .'
