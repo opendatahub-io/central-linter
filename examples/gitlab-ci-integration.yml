@@ -20,14 +20,14 @@
 lint-all-shared-config:
   extends: .lint-template
   script:
-    - make linter-central
+    - make -f $HOME/Makefile linter-central
 
 # Use Case 1b: Config files in standard locations (auto-discovery)
 # Project has: .ruff.toml, .yamllint, renovate.json in project root
 lint-all-auto-discovery:
   extends: .lint-template
   script:
-    - make linter-central
+    - make -f $HOME/Makefile linter-central
 
 # Use Case 1c: Custom config locations (pass via Makefile variables)
 # Project has: .ci/ruff.toml, .ci/yamllint.yaml, config/renovate.json
@@ -38,13 +38,13 @@ lint-all-custom-configs:
     YAMLLINT_CONFIG: "-c .ci/yamllint.yaml"
     RENOVATE_CONFIG: "config/renovate.json"
   script:
-    - make linter-central
+    - make -f $HOME/Makefile linter-central
 
 # Use Case 1d: Custom config locations (inline pass to make)
 lint-all-custom-inline:
   extends: .lint-template
   script:
-    - make linter-central
+    - make -f $HOME/Makefile linter-central
         RUFF_CONFIG="--config .ci/ruff.toml"
         YAMLLINT_CONFIG="-c .ci/yamllint.yaml"
         RENOVATE_CONFIG="config/renovate.json"
@@ -56,7 +56,7 @@ lint-all-with-args:
     RUFF_ARGS: "check --fix ."
     YAMLLINT_ARGS: "-s ."  # Strict mode
   script:
-    - make linter-central
+    - make -f $HOME/Makefile linter-central
 
 # ============================================================================
 # Option 2: Run linters individually

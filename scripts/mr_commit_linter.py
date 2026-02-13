@@ -806,12 +806,16 @@ def read_linterignore_file(file_path: Path) -> List[str]:
         file_path: Path to linterignore file
 
     Returns:
-        List of file patterns/paths
+        List of file patterns/paths (excludes comments and empty lines)
     """
     try:
         with open(file_path, 'r') as f:
             content = f.read()
-        return [line.strip() for line in content.splitlines() if line.strip()]
+        return [
+            line.strip()
+            for line in content.splitlines()
+            if line.strip() and not line.strip().startswith('#')
+        ]
     except PermissionError:
         logger.error(f"ERROR: No permission to read file from {file_path}")
         sys.exit(1)

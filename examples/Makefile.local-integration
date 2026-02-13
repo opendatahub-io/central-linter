@@ -76,7 +76,7 @@ RENOVATE_CONFIG ?=
 
 .PHONY: linter-central
 linter-central: ## Run all linters (ruff, yamllint, renovate-config-validator)
-	$(LINTER_RUN) make linter-central \
+	$(LINTER_RUN) make -f /home/linter/Makefile linter-central \
 		RUFF_CONFIG="$(RUFF_CONFIG)" \
 		YAMLLINT_CONFIG="$(YAMLLINT_CONFIG)" \
 		RENOVATE_CONFIG="$(RENOVATE_CONFIG)"
