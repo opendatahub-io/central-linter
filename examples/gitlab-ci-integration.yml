@@ -1,6 +1,48 @@
 # Example: How to integrate central-linter into your GitLab CI/CD pipeline
+
+# ============================================================================
+# RECOMMENDED: Use the includable CI template
+# ============================================================================
 #
-# Copy this to your project's .gitlab-ci.yml and customize as needed
+# This approach gives you:
+# - Version pinning via ref:
+# - Automatic updates via Renovate
+# - Centralized job definition (no copy-paste)
+#
+# Add this to your .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'redhat/rhel-ai/ci-cd/central-linter'
+#       file: '/templates/linter-central.yml'
+#       ref: v0.1.0
+#
+# To customize the stage (default is 'lint'):
+#
+#   include:
+#     - project: 'redhat/rhel-ai/ci-cd/central-linter'
+#       file: '/templates/linter-central.yml'
+#       ref: v0.1.0
+#       inputs:
+#         JOB_STAGE: checks
+#
+# Add this to your renovate.json for automatic version updates:
+#
+#   {
+#     "customType": "regex",
+#     "managerFilePatterns": [".gitlab-ci.yml"],
+#     "matchStrings": [
+#       "project:\\s*'redhat/rhel-ai/ci-cd/central-linter'\\s+file:\\s*'[^']*'\\s+ref:\\s*(?<currentValue>v[^\\s]+)"
+#     ],
+#     "datasourceTemplate": "gitlab-releases",
+#     "depNameTemplate": "redhat/rhel-ai/ci-cd/central-linter"
+#   }
+
+# ============================================================================
+# ALTERNATIVE: Direct image reference
+# ============================================================================
+#
+# Use this approach when you need full control over the job definition
+# (custom rules, scripts, variables, etc.)
 
 # Shared template for all linter jobs
 .lint-template:
@@ -9,8 +51,9 @@
   # Use :latest ONLY for central-linter repo self-linting
   image: quay.io/aipcc-cicd/central-linter:v0.1.0  # Pin to stable version
   rules:
+    - if: $CI_COMMIT_MESSAGE =~ /^Draft:/
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
 # ============================================================================
 # Option 1: Run all linters together using Makefile

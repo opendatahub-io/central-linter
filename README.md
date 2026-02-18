@@ -74,49 +74,55 @@ podman run --rm -v $(pwd):/workspace:z -w /workspace \
 
 ### In GitLab CI/CD
 
-See `examples/gitlab-ci-integration.yml` for complete examples. Basic usage:
+**Recommended: Use the includable CI template** with a pinned `ref:`. This gives you version pinning, Renovate-managed updates, and a centralized job definition:
 
 ```yaml
-# Shared template
-.lint-template:
-  stage: lint
-  # IMPORTANT: Pin to specific version for stability
-  # Use :latest ONLY for central-linter repo self-linting
-  image: quay.io/aipcc-cicd/central-linter:v0.1.0
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-
-# Option 1: Run all linters using container's Makefile
-lint-all:
-  extends: .lint-template
-  script:
-    - make -f $HOME/Makefile linter-central
-
-# Option 2: Run linters individually (direct commands)
-ruff:
-  extends: .lint-template
-  script:
-    - ruff check .
+# In your .gitlab-ci.yml
+include:
+  - project: 'redhat/rhel-ai/ci-cd/central-linter'
+    file: '/templates/linter-central.yml'
+    ref: v0.1.0
 ```
 
-**Version Pinning Best Practices:**
+The template defines a `linter-central` job in the `lint` stage. To customize the stage:
 
-| Usage | Recommended Tag | Reason |
-|-------|----------------|---------|
-| **Client repos (production)** | `:v0.1.0` or `:abc1234` | Stability, predictable behavior |
-| **Central-linter self-lint** | `:latest` | Test latest changes |
-| **Development/testing** | `:latest` or `:main` | Latest features |
-
-**Available tags:**
-- `:latest` - Latest stable release from main branch
-- `:v0.1.0` - Specific version (recommended for production)
-- `:abc1234` - Specific commit SHA (maximum reproducibility)
-
-**To update your pinned version:**
 ```yaml
-# Check available versions at: https://quay.io/repository/aipcc-cicd/central-linter?tab=tags
-image: quay.io/aipcc-cicd/central-linter:v0.2.0  # Update to new version
+include:
+  - project: 'redhat/rhel-ai/ci-cd/central-linter'
+    file: '/templates/linter-central.yml'
+    ref: v0.1.0
+    inputs:
+      JOB_STAGE: checks
+```
+
+**Renovate setup for automatic version updates:**
+
+Add to your `renovate.json` to get MRs when new central-linter versions are released:
+
+```json
+{
+  "customType": "regex",
+  "managerFilePatterns": [".gitlab-ci.yml"],
+  "matchStrings": [
+    "project:\\s*'redhat/rhel-ai/ci-cd/central-linter'\\s+file:\\s*'[^']*'\\s+ref:\\s*(?<currentValue>v[^\\s]+)"
+  ],
+  "datasourceTemplate": "gitlab-releases",
+  "depNameTemplate": "redhat/rhel-ai/ci-cd/central-linter"
+}
+```
+
+**Alternative: Direct image reference** (see `examples/gitlab-ci-integration.yml` for more examples):
+
+```yaml
+lint:
+  stage: lint
+  image: quay.io/aipcc-cicd/central-linter:v0.1.0
+  rules:
+    - if: $CI_COMMIT_MESSAGE =~ /^Draft:/
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - make -f $HOME/Makefile linter-central
 ```
 
 ## Local Development Integration
@@ -542,13 +548,17 @@ Both builds run **natively** on their respective runners for maximum performance
 
 ### Creating a Release
 
-```bash
-# Create annotated tag with commit history
-git tag -a v0.1.0 -m "$(git log $(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD --oneline --no-decorate)"
+Use `release.sh` to bump the image version in the CI template, commit, and tag in one step:
 
-# Push tag (triggers CI/CD to build and push image)
-git push origin v0.1.0
+```bash
+# Bump version, commit, and tag
+./release.sh v0.2.0
+
+# Push commit and tag (triggers CI/CD to build and push image)
+git push && git push --tags
 ```
+
+The script updates the image version in `templates/linter-central.yml` to match the tag, ensuring the template and image are always in sync. Consuming repos using `include: project:` with a pinned `ref:` will get the matching image version automatically.
 
 ## Automated Dependency Updates
 
