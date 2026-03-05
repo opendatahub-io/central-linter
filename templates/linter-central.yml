@@ -1,0 +1,17 @@
+spec:
+  inputs:
+    JOB_STAGE:
+      default: lint
+      description: "Stage for the central linter job"
+---
+linter-central:
+  stage: $[[ inputs.JOB_STAGE ]]
+  image: quay.io/aipcc-cicd/central-linter:v0.1.0
+  rules:
+    - if: $CI_COMMIT_MESSAGE =~ /^Draft:/
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - make -f $HOME/Makefile linter-central
+  tags:
+    - aipcc-k8s-cicd
