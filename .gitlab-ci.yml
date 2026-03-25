@@ -73,37 +73,17 @@ build-arm64:
   variables:
     ARCH: arm64
 
-# Lint this repository using the newly built central-linter image
-lint:
+include:
+  - local: templates/linter-central.yml
+    inputs:
+      IMAGE: ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
+
+linter-central:
   extends: .default_rules
-  stage: lint
-  image: quay.io/podman/stable:latest
   needs: ["build-amd64"]
-  tags:
-    - aipcc-small-x86_64
   before_script:
-    # Login to GitLab container registry
-    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     # Fetch main branch for mr-commit-linter to compare against
     - git fetch origin main:main || true
-  script:
-    - echo "Pulling newly built image from registry..."
-    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
-    - echo "Running linter with newly built image..."
-    - |
-      podman run --rm \
-        -v ${CI_PROJECT_DIR}:/workspace:Z \
-        -w /workspace \
-        -e CI_PROJECT_ID \
-        -e CI_MERGE_REQUEST_IID \
-        -e CI_API_V4_URL \
-        -e CI_MERGE_REQUEST_TITLE \
-        -e CI_MERGE_REQUEST_DESCRIPTION \
-        -e CI_MERGE_REQUEST_DIFF_BASE_SHA \
-        -e GITLAB_API_TOKEN \
-        -e GITLAB_USER_LOGIN \
-        -e GITLAB_USER_NAME \
-        ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64 make linter-central
 
 # Template for testing images
 .test_template:
