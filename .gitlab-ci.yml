@@ -1,7 +1,11 @@
+include:
+  - local: templates/linter-central.yml
+    inputs:
+      IMAGE: ${BUILD_IMAGE}
+
 variables:
   IMAGE_NAME: "quay.io/aipcc-cicd/central-linter"
-  # Use GitLab container registry for intermediate builds
-  BUILD_IMAGE_BASE: "${CI_REGISTRY}/${CI_PROJECT_PATH}/central-linter"
+  BUILD_IMAGE: "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
   CONTAINERFILE_PATH: "Containerfile"
   CONTEXT_DIR: "."
 
@@ -11,193 +15,78 @@ stages:
   - test
   - push
 
-# Default tags for non-arch-specific jobs
 default:
   tags:
-    - aipcc-small-x86_64
+    - aipcc-k8s-cicd
 
-# Common rules for all jobs
 .default_rules:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_COMMIT_TAG'
 
-# Vault helper - authenticates to Corp Vault and exports VAULT_TOKEN
-.vault_auth:
-  before_script:
-    - |
-      set -e
-      echo $VAULT_ADDR
-      podman run --rm --cap-add IPC_LOCK \
-        -e VAULT_ADDR=$VAULT_ADDR \
-        -e VAULT_SKIP_VERIFY=1 \
-        docker.io/hashicorp/vault:1.17.1 \
-          vault write --format json auth/approle/login role_id=$VAULT_ROLE_ID secret_id=$VAULT_SECRET_ID > auth.json
-      curl -L -o jq https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux64 && chmod +x jq && sudo mv jq /usr/local/bin/
-      export VAULT_TOKEN=$(cat auth.json | jq -r '.auth.client_token')
-      rm auth.json
-
-# Template for building images
-.build_template:
+build:
   extends: .default_rules
   stage: build
   image: quay.io/podman/stable:latest
-  before_script:
-    # Login to GitLab container registry
-    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-  script:
-    - echo "Building image for ${ARCH}..."
-    - podman build
-        --format docker
-        --tag ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH}
-        --file ${CONTAINERFILE_PATH}
-        ${CONTEXT_DIR}
-    - echo "Pushing image to GitLab registry..."
-    - podman push ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH}
-    - echo "Build complete for ${ARCH}"
-
-# Build for amd64 (uses native amd64 runner)
-build-amd64:
-  extends: .build_template
   tags:
     - aipcc-small-x86_64
-  variables:
-    ARCH: amd64
-
-# Build for arm64 (uses native arm64 runner)
-build-arm64:
-  extends: .build_template
-  tags:
-    - aipcc-small-aarch64
-  variables:
-    ARCH: arm64
-
-include:
-  - local: templates/linter-central.yml
-    inputs:
-      IMAGE: ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - podman build --format docker --tag ${BUILD_IMAGE} --file ${CONTAINERFILE_PATH} ${CONTEXT_DIR}
+    - podman push ${BUILD_IMAGE}
 
 linter-central:
   extends: .default_rules
-  needs: ["build-amd64"]
+  needs: ["build"]
   before_script:
-    # Fetch main branch for mr-commit-linter to compare against
     - git fetch origin main:main || true
 
-# Template for testing images
-.test_template:
+test:
   extends: .default_rules
   stage: test
-  image: quay.io/podman/stable:latest
-  before_script:
-    # Login to GitLab container registry
-    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  image: ${BUILD_IMAGE}
+  needs: ["build"]
   script:
-    - echo "Pulling image for ${ARCH} from registry..."
-    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH}
-    - echo "Testing image for ${ARCH}..."
-    - |
-      podman run --rm ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH} ruff --version
-      podman run --rm ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH} yamllint --version
-      podman run --rm ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-${ARCH} renovate-config-validator
-    - echo "Test passed for ${ARCH}"
+    - ruff --version
+    - yamllint --version
+    - renovate-config-validator
+    - pytest tests/ -v
 
-# Test amd64 image
-test-amd64:
-  extends: .test_template
-  tags:
-    - aipcc-small-x86_64
-  needs: ["build-amd64"]
-  variables:
-    ARCH: amd64
-
-# Test arm64 image
-test-arm64:
-  extends: .test_template
-  tags:
-    - aipcc-small-aarch64
-  needs: ["build-arm64"]
-  variables:
-    ARCH: arm64
-
-# Run unit tests for mr_commit_linter
-test-unit:
-  extends: .default_rules
-  stage: test
-  image: quay.io/podman/stable:latest
-  tags:
-    - aipcc-small-x86_64
-  needs: ["build-amd64"]
-  before_script:
-    # Login to GitLab container registry
-    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-  script:
-    - echo "Running unit tests for mr_commit_linter..."
-    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
-    - podman run --rm -v ${CI_PROJECT_DIR}:/workspace:Z -w /workspace ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64 pytest tests/ -v
-    - echo "Unit tests passed"
-
-# Push arch-specific images and create multi-arch manifests
 push:
-  extends: .vault_auth
   stage: push
   image: quay.io/podman/stable:latest
-  needs: ["build-amd64", "build-arm64", "test-amd64", "test-arm64", "test-unit"]
+  tags:
+    - aipcc-small-x86_64
+  needs: ["build", "test"]
   before_script:
-    - !reference [.vault_auth, before_script]
     - |
       set -e
-      # Login to GitLab container registry
+      export VAULT_TOKEN=$(scripts/vault-auth.sh)
+      export VAULT_SKIP_VERIFY=1
+      QUAY_USERNAME=$(vault kv get -field=username apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
+      QUAY_PASSWORD=$(vault kv get -field=password apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
+
       echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-
-      # Fetch Quay credentials from vault
-      podman run --rm --cap-add IPC_LOCK \
-        -e VAULT_ADDR=$VAULT_ADDR \
-        -e VAULT_SKIP_VERIFY=1 \
-        -e VAULT_TOKEN=$VAULT_TOKEN \
-        docker.io/hashicorp/vault:1.17.1 \
-          vault kv get --format json apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab > quay_creds.json
-      export QUAY_USERNAME=$(cat quay_creds.json | jq -r '.data.data.username')
-      export QUAY_PASSWORD=$(cat quay_creds.json | jq -r '.data.data.password')
-      rm quay_creds.json
-
-      # Login to Quay
       echo "$QUAY_PASSWORD" | podman login -u "$QUAY_USERNAME" --password-stdin quay.io
   script:
-    - echo "Pulling arch-specific images from GitLab registry..."
-    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64
-    - podman pull ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-arm64
-    - echo "Tagging images for Quay..."
-    - podman tag ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-amd64 ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64
-    - podman tag ${BUILD_IMAGE_BASE}:${CI_COMMIT_SHORT_SHA}-arm64 ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
-    - echo "Pushing arch-specific images to Quay..."
-    - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64
-    - podman push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
+    - podman pull ${BUILD_IMAGE}
     - |
-      # Helper function to create and push manifest
-      create_and_push_manifest() {
+      push_tag() {
         local tag=$1
-        echo "Creating manifest for ${tag}..."
-        podman manifest rm ${IMAGE_NAME}:${tag} 2>/dev/null || true
-        podman manifest create ${IMAGE_NAME}:${tag} \
-          ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-amd64 \
-          ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}-arm64
-        podman manifest push ${IMAGE_NAME}:${tag}
-        echo "Successfully pushed ${IMAGE_NAME}:${tag} (amd64, arm64)"
+        podman tag ${BUILD_IMAGE} ${IMAGE_NAME}:${tag}
+        podman push ${IMAGE_NAME}:${tag}
       }
 
-      # Always push commit-sha
-      create_and_push_manifest ${CI_COMMIT_SHORT_SHA}
+      push_tag ${CI_COMMIT_SHORT_SHA}
 
-      # Push tag version if this is a tag
       if [ -n "$CI_COMMIT_TAG" ]; then
-        create_and_push_manifest ${CI_COMMIT_TAG}
+        push_tag ${CI_COMMIT_TAG}
       fi
 
-      # Push latest on main branch
       if [ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]; then
-        create_and_push_manifest latest
+        push_tag latest
       fi
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
