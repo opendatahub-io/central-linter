@@ -53,7 +53,7 @@ test:
     - yamllint --version
     - renovate-config-validator
     - pytest tests/ -v
-    - VAULT_BIN=$(scripts/vault-install.sh) && "${VAULT_BIN}" version
+    - scripts/vault-login.sh "$(scripts/vault-install.sh)" >/dev/null
 
 push:
   stage: push
