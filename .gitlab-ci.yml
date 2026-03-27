@@ -53,6 +53,7 @@ test:
     - yamllint --version
     - renovate-config-validator
     - pytest tests/ -v
+    - scripts/vault-auth.sh > /dev/null
 
 push:
   stage: push

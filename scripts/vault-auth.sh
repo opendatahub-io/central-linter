@@ -24,9 +24,11 @@ if ! is_available vault; then
   if ! is_available unzip; then
     dnf install -y unzip >&2
   fi
+  INSTALL_DIR="${HOME}/.local/bin"
+  mkdir -p "${INSTALL_DIR}"
   curl -fsSL "${VAULT_URL}" -o /tmp/vault.zip
-  unzip -o /tmp/vault.zip -d /usr/local/bin/ >&2 && rm /tmp/vault.zip
+  unzip -o /tmp/vault.zip -d "${INSTALL_DIR}/" >&2 && rm /tmp/vault.zip
 fi
 
-VAULT_SKIP_VERIFY=1 vault write -field=client_token auth/approle/login \
+VAULT_SKIP_VERIFY=1 vault write -field=token auth/approle/login \
   role_id="$VAULT_ROLE_ID" secret_id="$VAULT_SECRET_ID"
