@@ -53,7 +53,7 @@ test:
     - yamllint --version
     - renovate-config-validator
     - pytest tests/ -v
-    - scripts/vault-auth.sh > /dev/null
+    - scripts/vault-login.sh "$(scripts/vault-install.sh)" >/dev/null
 
 push:
   stage: push
@@ -64,10 +64,11 @@ push:
   before_script:
     - |
       set -e
-      export VAULT_TOKEN=$(scripts/vault-auth.sh)
+      VAULT_BIN=$(scripts/vault-install.sh)
+      export VAULT_TOKEN=$(scripts/vault-login.sh "${VAULT_BIN}")
       export VAULT_SKIP_VERIFY=1
-      QUAY_USERNAME=$(vault kv get -field=username apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
-      QUAY_PASSWORD=$(vault kv get -field=password apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
+      QUAY_USERNAME=$("${VAULT_BIN}" kv get -field=username apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
+      QUAY_PASSWORD=$("${VAULT_BIN}" kv get -field=password apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
 
       echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
       echo "$QUAY_PASSWORD" | podman login -u "$QUAY_USERNAME" --password-stdin quay.io
