@@ -10,6 +10,8 @@ This image includes the following linters:
 - **yamllint** - YAML file linter
 - **renovate-config-validator** - Validates Renovate configuration files
 - **mr-commit-linter** - Validates GitLab merge requests and commit messages against AIPCC guidelines
+- **shellcheck** - Static analysis for shell scripts
+- **markdownlint** - Markdown style and syntax linter
 
 ## Image Location
 
@@ -33,6 +35,8 @@ make linter-central
 make linter-ruff-check
 make linter-yamllint
 make linter-renovate
+make linter-shellcheck
+make linter-markdownlint
 ```
 
 The `linter-central` target executes:
@@ -40,6 +44,8 @@ The `linter-central` target executes:
 - `yamllint .`
 - `renovate-config-validator` (auto-discovers configs, passes if none found)
 - `mr-commit-linter` (validates commit messages and MR titles/descriptions)
+- `shellcheck` (checks all `*.sh` files, skips if none found)
+- `markdownlint` (checks all `*.md` files)
 
 ### Using the Container Image
 
@@ -446,14 +452,17 @@ podman login quay.io
 Run `make help` to see all available targets:
 
 ```
-linter-central     - Run all linters (ruff, yamllint, renovate-config-validator)
-linter-ruff-check  - Run only ruff check
-linter-yamllint    - Run only yamllint
-linter-renovate    - Run only renovate-config-validator
-build              - Build image for native architecture
-test               - Test the linters in the container
-push               - Push image to quay.io
-clean              - Remove local images
+linter-central       - Run all linters (ruff, yamllint, renovate, mr-commit, shellcheck, markdownlint)
+linter-ruff-check    - Run only ruff check
+linter-yamllint      - Run only yamllint
+linter-renovate      - Run only renovate-config-validator
+linter-mr-commit     - Run only MR/commit linter
+linter-shellcheck    - Run only shellcheck
+linter-markdownlint  - Run only markdownlint
+build                - Build image for native architecture
+test                 - Test the linters in the container
+push                 - Push image to quay.io
+clean                - Remove local images
 ```
 
 ### Running Unit Tests
@@ -567,14 +576,17 @@ Renovate automatically creates merge requests when new versions are available:
 - **ruff**: Monitors GitHub releases from `astral-sh/ruff`
 - **yamllint**: Monitors PyPI package
 - **renovate**: Monitors npm package
+- **shellcheck-py**: Monitors PyPI package (wraps the shellcheck binary)
+- **markdownlint-cli**: Monitors npm package
 
 Linter versions are defined in `Containerfile`:
 
 ```
 ARG RUFF_VERSION=0.14.2
-ARG YAMLLINT_VERSION=1.37.1
-ARG RENOVATE_VERSION=42.21.3
-ARG NODE_MAJOR=20
+ARG YAMLLINT_VERSION=1.38.0
+ARG RENOVATE_VERSION=43.55.6
+ARG SHELLCHECK_VERSION=0.10.0.1
+ARG MARKDOWNLINT_VERSION=0.44.0
 ```
 
 Version detection and grouping is configured in `renovate.json` using regex managers.
@@ -595,6 +607,7 @@ Simply run the linters without any configuration files. The image includes **sha
 **Shared config settings:**
 - **yamllint**: Line length up to 120 chars (**warning**, not error), no document-start required
 - **ruff**: Line length 120 chars, basic Python checks (E, F, I), E501 ignored
+- **markdownlint**: Stylistic rules disabled (line length, inline HTML, blank lines around fences/lists, tabs in code blocks, emphasis-as-heading, duplicate headings, code block language, first-line heading); structural and correctness rules remain active
 
 ```bash
 # Locally
@@ -608,23 +621,26 @@ lint:
 ```
 
 **What happens:**
-1. Makefile checks if your repo has `.yamllint`, `.ruff.toml`, or `pyproject.toml`
+1. Makefile checks if your repo has `.yamllint`, `.ruff.toml`, `pyproject.toml`, or `.markdownlint.yaml`
 2. If **not found** → Uses shared configs from `~/.config/linter/` (same as central-linter uses)
 3. If **found** → Uses your config (auto-discovery)
 
+Note: shellcheck natively auto-discovers `.shellcheckrc` in the project root — no Makefile logic needed.
+
 **Shared configs location:**
-- **Source**: `config/yamllint.yaml` and `config/ruff.toml` in this repo
-- **In container image**: `~/.config/linter/yamllint.yaml` and `~/.config/linter/ruff.toml` (in linter user's home)
+- **Source**: `config/yamllint.yaml`, `config/ruff.toml`, and `config/markdownlint.yaml` in this repo
+- **In container image**: `~/.config/linter/` (in linter user's home)
 - **Central-linter self-linting**: Via symlinks `.yamllint` → `config/yamllint.yaml`
 
 **View/Copy shared configs:**
 ```bash
 # View from container
 podman run --rm quay.io/aipcc-cicd/central-linter:latest cat ~/.config/linter/yamllint.yaml
+podman run --rm quay.io/aipcc-cicd/central-linter:latest cat ~/.config/linter/markdownlint.yaml
 
 # Copy to your repo (optional - creates a local override)
 podman run --rm quay.io/aipcc-cicd/central-linter:latest \
-  cat ~/.config/linter/yamllint.yaml > .yamllint
+  cat ~/.config/linter/markdownlint.yaml > .markdownlint.yaml
 ```
 
 **Works for:** Quick setup, simple projects, consistent AIPCC team standards without strict line-length errors
@@ -641,6 +657,8 @@ my-project/
 ├── .ruff.toml              # Ruff auto-discovers this
 ├── .yamllint               # yamllint auto-discovers this
 ├── renovate.json           # renovate-config-validator checks this by default
+├── .markdownlint.yaml      # markdownlint auto-discovers this
+├── .shellcheckrc           # shellcheck auto-discovers this
 └── src/
 ```
 
@@ -665,6 +683,8 @@ When `make linter-central` runs, the Makefile checks if you provided explicit co
 | **Ruff** | 1. `pyproject.toml` (in current dir)<br>2. `ruff.toml`<br>3. `.ruff.toml`<br>4. Check parent directories recursively<br>5. If none found → Use `$HOME/.config/linter/ruff.toml` (shared config) | Stops at first match |
 | **yamllint** | 1. `.yamllint` (in current dir)<br>2. `.yamllint.yaml`<br>3. `.yamllint.yml`<br>4. `$XDG_CONFIG_HOME/yamllint/config`<br>5. `~/.config/yamllint/config`<br>6. If none found → Use `$HOME/.config/linter/yamllint.yaml` (shared config) | Stops at first match |
 | **Renovate** | 1. Auto-discovers: `renovate.json`, `.renovaterc`, `.renovaterc.json`, etc.<br>2. Or specify via `RENOVATE_CONFIG=path` | Auto-discovery by default, passes if none found |
+| **shellcheck** | 1. `.shellcheckrc` (in current dir, then parent dirs)<br>2. `~/.shellcheckrc`<br>3. If none found → Uses built-in defaults | Native auto-discovery, override flags via `SHELLCHECK_ARGS` |
+| **markdownlint** | 1. `.markdownlint.yaml` (in current dir)<br>2. `.markdownlint.yml`<br>3. `.markdownlint.json`<br>4. If none found → Use `$HOME/.config/linter/markdownlint.yaml` (shared config) | Stops at first match |
 
 **Example:** If your repo has both `pyproject.toml` with `[tool.ruff]` section AND `.ruff.toml`, Ruff will use `pyproject.toml` (first in search order).
 
@@ -756,8 +776,11 @@ Run `make help` to see all available configuration options:
 | `RUFF_CONFIG` | Custom ruff config path | `--config .ci/ruff.toml` |
 | `YAMLLINT_CONFIG` | Custom yamllint config path | `-c .ci/yamllint.yaml` |
 | `RENOVATE_CONFIG` | Custom renovate file path (default: auto-discovery) | `config/renovate.json` |
+| `SHELLCHECK_ARGS` | shellcheck flags (default: `--severity=warning`) | `--severity=error -e SC2086` |
+| `MARKDOWNLINT_CONFIG` | Custom markdownlint config path | `.ci/markdownlint.yaml` |
 | `RUFF_ARGS` | Additional ruff arguments | `check --fix .` |
 | `YAMLLINT_ARGS` | Additional yamllint arguments | `-s .` |
+| `MARKDOWNLINT_ARGS` | Additional markdownlint arguments (default: `.`) | `docs/` |
 
 ---
 

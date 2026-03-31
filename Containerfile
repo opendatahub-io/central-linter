@@ -5,6 +5,8 @@ FROM ${BASE_IMAGE}
 ARG RUFF_VERSION=0.14.2
 ARG YAMLLINT_VERSION=1.38.0
 ARG RENOVATE_VERSION=43.55.6
+ARG SHELLCHECK_VERSION=0.10.0.1
+ARG MARKDOWNLINT_VERSION=0.44.0
 
 # Ensure we're running as root for package installation
 USER root
@@ -22,14 +24,18 @@ RUN pip3 install --no-cache-dir \
         # Python linters
         "ruff==${RUFF_VERSION}" \
         "yamllint==${YAMLLINT_VERSION}" \
+        # Shell script linter (shellcheck-py wraps the shellcheck binary)
+        "shellcheck-py==${SHELLCHECK_VERSION}" \
         # Script dependencies (for mr_commit_linter)
         colorama \
         requests \
         # Testing dependencies
         pytest \
         pytest-mock \
-    # Install Node.js linters
-    && npm install -g "renovate@${RENOVATE_VERSION}"
+    # Install Renovate config validator
+    && npm install -g "renovate@${RENOVATE_VERSION}" \
+    # Install Markdown linter
+    && npm install -g "markdownlint-cli@${MARKDOWNLINT_VERSION}"
 
 # Copy shared linter configurations, scripts, and Makefile
 # COPY automatically creates directories with ownership set via --chown

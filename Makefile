@@ -1,4 +1,4 @@
-.PHONY: help linter-central linter-ruff-check linter-yamllint linter-renovate linter-mr-commit build push test clean
+.PHONY: help linter-central linter-ruff-check linter-yamllint linter-renovate linter-mr-commit linter-shellcheck linter-markdownlint build push test clean
 
 # Configuration
 IMAGE_NAME := quay.io/aipcc-cicd/central-linter
@@ -17,24 +17,33 @@ YAMLLINT_CONFIG ?=
 RENOVATE_VALIDATOR_ARGS ?=
 RENOVATE_CONFIG ?=
 
+SHELLCHECK_ARGS ?= --severity=warning
+
+MARKDOWNLINT_ARGS ?= .
+MARKDOWNLINT_CONFIG ?=
+
 help:
 	@echo "Available targets:"
-	@echo "  linter-central     - Run all linters (ruff, yamllint, renovate, mr-commit)"
-	@echo "  linter-ruff-check  - Run only ruff check"
-	@echo "  linter-yamllint    - Run only yamllint"
-	@echo "  linter-renovate    - Run only renovate-config-validator"
-	@echo "  linter-mr-commit   - Run only MR/commit linter"
-	@echo "  build              - Build image for native architecture"
-	@echo "  test               - Test the linters in the container"
-	@echo "  push               - Push image to quay.io"
-	@echo "  clean              - Remove local images"
+	@echo "  linter-central       - Run all linters (ruff, yamllint, renovate, mr-commit, shellcheck, markdownlint)"
+	@echo "  linter-ruff-check    - Run only ruff check"
+	@echo "  linter-yamllint      - Run only yamllint"
+	@echo "  linter-renovate      - Run only renovate-config-validator"
+	@echo "  linter-mr-commit     - Run only MR/commit linter"
+	@echo "  linter-shellcheck    - Run only shellcheck"
+	@echo "  linter-markdownlint  - Run only markdownlint"
+	@echo "  build                - Build image for native architecture"
+	@echo "  test                 - Test the linters in the container"
+	@echo "  push                 - Push image to quay.io"
+	@echo "  clean                - Remove local images"
 	@echo ""
 	@echo "Linter configuration (optional):"
-	@echo "  RUFF_CONFIG=path       - Custom ruff config (e.g., --config .ci/ruff.toml)"
-	@echo "  YAMLLINT_CONFIG=path   - Custom yamllint config (e.g., -c .ci/yamllint.yaml)"
-	@echo "  RENOVATE_CONFIG=path   - Custom renovate file (default: auto-discovery)"
+	@echo "  RUFF_CONFIG=path            - Custom ruff config (e.g., --config .ci/ruff.toml)"
+	@echo "  YAMLLINT_CONFIG=path        - Custom yamllint config (e.g., -c .ci/yamllint.yaml)"
+	@echo "  RENOVATE_CONFIG=path        - Custom renovate file (default: auto-discovery)"
+	@echo "  SHELLCHECK_ARGS=flags       - Additional shellcheck flags (default: --severity=warning)"
+	@echo "  MARKDOWNLINT_CONFIG=path    - Custom markdownlint config (e.g., .ci/markdownlint.yaml)"
 
-linter-central: linter-ruff-check linter-yamllint linter-renovate linter-mr-commit
+linter-central: linter-ruff-check linter-yamllint linter-renovate linter-mr-commit linter-shellcheck linter-markdownlint
 	@echo ""
 	@echo "All linters passed successfully"
 
@@ -104,6 +113,42 @@ linter-mr-commit:
 	@echo "MR/commit linter passed"
 	@echo ""
 
+linter-shellcheck:
+	@echo ""
+	@echo "================================================================================"
+	@echo "Running shellcheck..."
+	@echo "================================================================================"
+	@SHELL_FILES=$$(git ls-files '*.sh' 2>/dev/null || find . -name "*.sh" -not -path "./.git/*"); \
+	if [ -z "$$SHELL_FILES" ]; then \
+		echo "No shell scripts found, skipping shellcheck"; \
+	else \
+		echo "$$SHELL_FILES" | xargs shellcheck $(SHELLCHECK_ARGS) || (echo "ERROR: shellcheck failed" && exit 1); \
+	fi
+	@echo "Shellcheck passed"
+	@echo ""
+
+linter-markdownlint:
+	@echo ""
+	@echo "================================================================================"
+	@echo "Running markdownlint..."
+	@echo "================================================================================"
+	@if [ -z "$(MARKDOWNLINT_CONFIG)" ]; then \
+		if [ ! -f ".markdownlint.yaml" ] && [ ! -f ".markdownlint.yml" ] && [ ! -f ".markdownlint.json" ]; then \
+			if [ -f "$$HOME/.config/markdownlint.yaml" ]; then \
+				echo "Using shared markdownlint config from container..."; \
+				markdownlint --config $$HOME/.config/markdownlint.yaml $(MARKDOWNLINT_ARGS) || (echo "ERROR: Markdown lint failed" && exit 1); \
+			else \
+				markdownlint $(MARKDOWNLINT_ARGS) || (echo "ERROR: Markdown lint failed" && exit 1); \
+			fi; \
+		else \
+			markdownlint $(MARKDOWNLINT_ARGS) || (echo "ERROR: Markdown lint failed" && exit 1); \
+		fi; \
+	else \
+		markdownlint --config $(MARKDOWNLINT_CONFIG) $(MARKDOWNLINT_ARGS) || (echo "ERROR: Markdown lint failed" && exit 1); \
+	fi
+	@echo "Markdown lint passed"
+	@echo ""
+
 build:
 	@echo "Building image for native architecture..."
 	$(CONTAINER_MANAGER) build \
@@ -119,6 +164,10 @@ test:
 	$(CONTAINER_MANAGER) run --rm $(IMAGE_NAME):$(IMAGE_TAG) yamllint --version
 	@echo "Testing renovate-config-validator..."
 	$(CONTAINER_MANAGER) run --rm $(IMAGE_NAME):$(IMAGE_TAG) renovate-config-validator
+	@echo "Testing shellcheck..."
+	$(CONTAINER_MANAGER) run --rm $(IMAGE_NAME):$(IMAGE_TAG) shellcheck --version
+	@echo "Testing markdownlint..."
+	$(CONTAINER_MANAGER) run --rm $(IMAGE_NAME):$(IMAGE_TAG) markdownlint --version
 	@echo "All linters are functional"
 
 push:

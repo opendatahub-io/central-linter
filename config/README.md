@@ -8,6 +8,7 @@ This directory contains the **canonical linter configurations** used by both:
 
 - `yamllint.yaml` - Shared yamllint configuration
 - `ruff.toml` - Shared Ruff configuration
+- `markdownlint.yaml` - Shared markdownlint configuration
 
 ## How It Works
 
