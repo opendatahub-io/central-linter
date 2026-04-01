@@ -1,0 +1,5 @@
+# Claude Code local state (do not track)
+.claude/**
+# But do track repo-level skills
+!.claude/skills/
+!.claude/skills/**
