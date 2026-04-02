@@ -19,7 +19,6 @@ from scripts.mr_commit_linter import (
     validate_title_format,
     validate_commit_title,
     validate_commit_signed_off_by,
-    validate_commit_body_length,
     validate_mr_title,
     validate_mr_description,
     read_linterignore_file,
@@ -33,7 +32,6 @@ from scripts.mr_commit_linter import (
     is_merge_commit,
     is_parent_merge_commit,
     get_cherry_pick_source,
-    MIN_COMMIT_BODY_LINES,
     MIN_TITLE_DESCRIPTION_LENGTH,
     MIN_TITLE_DESCRIPTION_WORDS,
 )
@@ -437,27 +435,6 @@ class TestCommitValidation:
         result = validate_commit_signed_off_by(commit)
         assert result.success is False
         assert "does not contain a Signed-off-by" in result.error_message
-
-    def test_validate_commit_body_length_sufficient(self):
-        """Test body length validation with sufficient lines."""
-        commit = CommitInfo(
-            commit_id="abc123",
-            title="RHELAI-1234: Fix",
-            body="Description line\n\nAnother line\nSigned-off-by: Dev"
-        )
-        result = validate_commit_body_length(commit)
-        assert result.success is True
-
-    def test_validate_commit_body_length_too_short(self):
-        """Test body length validation with insufficient lines."""
-        commit = CommitInfo(
-            commit_id="abc123",
-            title="RHELAI-1234: Fix",
-            body="Short\n"
-        )
-        result = validate_commit_body_length(commit)
-        assert result.success is False
-        assert f"at least {MIN_COMMIT_BODY_LINES} lines" in result.error_message
 
 
 # ============================================================================
@@ -1111,7 +1088,6 @@ class TestIntegration:
         # All validations should pass
         assert validate_commit_title(commit).success is True
         assert validate_commit_signed_off_by(commit).success is True
-        assert validate_commit_body_length(commit).success is True
 
     def test_full_commit_validation_failure(self):
         """Test complete commit validation with invalid commit."""
@@ -1124,7 +1100,6 @@ class TestIntegration:
         # Multiple validations should fail
         assert validate_commit_title(commit).success is False
         assert validate_commit_signed_off_by(commit).success is False
-        assert validate_commit_body_length(commit).success is False
 
     def test_full_mr_validation_success(self):
         """Test complete MR validation with valid MR."""
