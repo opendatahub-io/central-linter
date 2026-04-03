@@ -5,7 +5,6 @@ Merge Request and Commit Linter for AIPCC GitLab repositories.
 This script validates that commits and merge requests follow team policies:
 - Commit titles must start with a Jira ticket ID or INTERNAL
 - Commits must have Signed-off-by tags
-- Commits must have adequate descriptions
 - INTERNAL commits can only modify whitelisted files
 """
 
@@ -36,9 +35,6 @@ POLICY_MESSAGE = f"See {POLICY_DOC_URL} for AIPCC Commit and Merge Request Guide
 
 # Bot usernames that are exempt from linting
 BOT_NAMES = ["platform-engineering-bot", "aipcc-cicd-bot"]
-
-# Minimum required lines in commit body (description + empty line + SOB)
-MIN_COMMIT_BODY_LINES = 3
 
 # Minimum description length after Jira ticket/INTERNAL
 MIN_TITLE_DESCRIPTION_LENGTH = 10
@@ -603,31 +599,6 @@ def validate_commit_signed_off_by(commit: CommitInfo) -> ValidationResult:
     )
 
 
-def validate_commit_body_length(commit: CommitInfo) -> ValidationResult:
-    """
-    Validate that commit body has minimum required lines.
-
-    The body must have at least:
-    - One line of description
-    - An empty line
-    - A Signed-off-by line
-
-    Args:
-        commit: Commit information
-
-    Returns:
-        ValidationResult
-    """
-    body_lines = commit.body.count("\n")
-    if body_lines >= MIN_COMMIT_BODY_LINES:
-        return ValidationResult.ok()
-
-    return ValidationResult.fail(
-        f"ERROR [COMMIT {commit.commit_id}]: description must be at least {MIN_COMMIT_BODY_LINES} "
-        f"lines in length (a description, an empty line, and a Signed-off-by:).\n{POLICY_MESSAGE}"
-    )
-
-
 def validate_mr_title(mr_info: MergeRequestInfo) -> ValidationResult:
     """
     Validate that MR title follows strict formatting rules.
@@ -937,10 +908,6 @@ def validate_commit(commit: CommitInfo) -> List[str]:
             errors.append(result.error_message)
 
     result = validate_commit_signed_off_by(commit)
-    if not result.success:
-        errors.append(result.error_message)
-
-    result = validate_commit_body_length(commit)
     if not result.success:
         errors.append(result.error_message)
 
