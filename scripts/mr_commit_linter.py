@@ -52,6 +52,8 @@ LINTERIGNORE_PATHS = [
 JIRA_PATTERN = re.compile(r"(([A-Z]{2,})-(\d+))", flags=re.MULTILINE)
 JIRA_INTERNAL_PATTERN = re.compile(r"INTERNAL", flags=re.MULTILINE)
 SIGNED_OFF_BY_PATTERN = re.compile(r"Signed-off-by: ", flags=re.MULTILINE)
+# Revert pattern: matches GitLab auto-generated revert titles
+REVERT_PATTERN = re.compile(r'^Revert "(.+)"$')
 
 # ============================================================================
 # DATA STRUCTURES
@@ -466,6 +468,7 @@ def validate_title_format(title: str) -> ValidationResult:
     - "JIRA-123: description"
     - "JIRA-1, JIRA-2: description"
     - "INTERNAL: description"
+    - 'Revert "JIRA-123: original title"' (validated by extracting the inner title)
 
     Rules enforced:
     1. Must have colon separating ticket from description
@@ -480,6 +483,12 @@ def validate_title_format(title: str) -> ValidationResult:
     Returns:
         ValidationResult with success or failure
     """
+    # Handle revert commits: GitLab auto-generates titles like Revert "JIRA-123: original title"
+    # Extract and validate the original title instead, since it was already validated when first committed
+    revert_match = REVERT_PATTERN.match(title)
+    if revert_match:
+        return validate_title_format(revert_match.group(1))
+
     # Check if title has INTERNAL or Jira ticket
     if not has_jira_ticket(title) and not has_internal_keyword(title):
         return ValidationResult.fail(

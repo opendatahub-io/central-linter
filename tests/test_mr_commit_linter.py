@@ -234,6 +234,34 @@ class TestValidateTitleFormat:
         assert result.success is False
         assert "must have space after comma" in result.error_message
 
+    # Revert commit handling
+    def test_valid_revert_with_jira_inner_title(self):
+        """Test that revert commits with valid inner JIRA title pass validation."""
+        result = validate_title_format('Revert "AIPCC-1234: Fix authentication bug"')
+        assert result.success is True
+
+    def test_valid_revert_with_internal_inner_title(self):
+        """Test that revert commits with valid INTERNAL inner title pass validation."""
+        result = validate_title_format('Revert "INTERNAL: Update documentation file"')
+        assert result.success is True
+
+    def test_valid_revert_with_multi_ticket_inner_title(self):
+        """Test that revert commits with valid multi-ticket inner title pass validation."""
+        result = validate_title_format('Revert "AIPCC-1, AIPCC-2: Fix multiple bugs"')
+        assert result.success is True
+
+    def test_invalid_revert_with_bad_inner_title(self):
+        """Test that revert commits with invalid inner title fail validation."""
+        result = validate_title_format('Revert "Fix authentication bug"')
+        assert result.success is False
+        assert "must start with a Jira ticket" in result.error_message
+
+    def test_invalid_plain_revert_no_quotes(self):
+        """Test that a title starting with 'Revert' but without quotes is not treated as revert."""
+        result = validate_title_format("Revert some change")
+        assert result.success is False
+        assert "must start with a Jira ticket" in result.error_message
+
 
 # ============================================================================
 # MERGE COMMIT TESTS
@@ -415,6 +443,27 @@ class TestCommitValidation:
         assert result.success is False
         assert "exactly one space after colon" in result.error_message
 
+    def test_validate_commit_title_revert_with_valid_inner_title(self):
+        """Test commit title validation for GitLab auto-generated revert commit."""
+        commit = CommitInfo(
+            commit_id="abc123",
+            title='Revert "AIPCC-1234: Fix authentication bug"',
+            body="Description\n\nSigned-off-by: Dev"
+        )
+        result = validate_commit_title(commit)
+        assert result.success is True
+
+    def test_validate_commit_title_revert_with_invalid_inner_title(self):
+        """Test commit title validation for revert commit with invalid inner title."""
+        commit = CommitInfo(
+            commit_id="abc123",
+            title='Revert "Fix authentication bug"',
+            body="Description\n\nSigned-off-by: Dev"
+        )
+        result = validate_commit_title(commit)
+        assert result.success is False
+        assert "must start with a Jira ticket" in result.error_message
+
     def test_validate_commit_signed_off_by_present(self):
         """Test Signed-off-by validation when tag is present."""
         commit = CommitInfo(
@@ -501,6 +550,29 @@ class TestMergeRequestValidation:
         result = validate_mr_title(mr_info)
         assert result.success is False
         assert "description is too short" in result.error_message
+
+    def test_validate_mr_title_revert_with_valid_inner_title(self):
+        """Test MR title validation for GitLab auto-generated revert MR."""
+        mr_info = MergeRequestInfo(
+            iid="123",
+            title='Revert "AIPCC-1234: Fix authentication bug"',
+            description="Description\n\nSigned-off-by: Dev",
+            author="developer"
+        )
+        result = validate_mr_title(mr_info)
+        assert result.success is True
+
+    def test_validate_mr_title_revert_with_invalid_inner_title(self):
+        """Test MR title validation for revert MR with invalid inner title."""
+        mr_info = MergeRequestInfo(
+            iid="123",
+            title='Revert "Fix authentication bug"',
+            description="Description\n\nSigned-off-by: Dev",
+            author="developer"
+        )
+        result = validate_mr_title(mr_info)
+        assert result.success is False
+        assert "must start with a Jira ticket" in result.error_message
 
     def test_validate_mr_description_valid(self):
         """Test MR description validation with valid description."""
