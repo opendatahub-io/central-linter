@@ -11,3 +11,4 @@ README.md
 .gitlab-ci.yml
 Makefile
 renovate.json
+templates/linter-central.yml

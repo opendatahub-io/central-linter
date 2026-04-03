@@ -98,9 +98,12 @@ else
     git commit -s -m "INTERNAL: Release ${VERSION}"
     git push -u origin "$BRANCH"
 
+    SOB="Signed-off-by: $(git config user.name) <$(git config user.email)>"
     glab mr create \
         --title "INTERNAL: Release ${VERSION}" \
-        --description "Bumps the central-linter image reference to \`${VERSION}\` in the CI template." \
+        --description "Bumps the central-linter image reference to \`${VERSION}\` in the CI template.
+
+${SOB}" \
         --target-branch main \
         --remove-source-branch \
         --yes
