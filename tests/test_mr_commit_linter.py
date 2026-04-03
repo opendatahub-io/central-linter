@@ -781,6 +781,85 @@ class TestNewlineAtEOF:
         text_file.write_text("regular text file\n")
         assert should_skip_newline_check(str(text_file)) is False
 
+    @pytest.mark.parametrize("filename", [
+        "image.svg",
+        "changes.patch",
+        "changes.diff",
+        "server.pem",
+        "server.crt",
+        "id_rsa.pub",
+        "id_rsa.key",
+        "uv.lock",
+        "poetry.lock",
+        "package-lock.json.lock",
+        "IMAGE.SVG",   # case-insensitive
+        "CERT.PEM",    # case-insensitive
+    ])
+    def test_should_skip_newline_check_tool_generated_extension(self, tmp_path, filename):
+        """Test that tool-generated file extensions are skipped."""
+        f = tmp_path / filename
+        f.write_text("content without newline")
+        assert should_skip_newline_check(str(f)) is True
+
+    @pytest.mark.parametrize("filename", [
+        "RPM-GPG-KEY-redhat",
+        "RPM-GPG-KEY-epel-9",
+        "RPM-GPG-KEY-",
+    ])
+    def test_should_skip_newline_check_gpg_key_filename(self, tmp_path, filename):
+        """Test that RPM-GPG-KEY-* files are skipped regardless of extension."""
+        f = tmp_path / filename
+        f.write_text("-----BEGIN PGP PUBLIC KEY BLOCK-----\n")
+        assert should_skip_newline_check(str(f)) is True
+
+    def test_should_skip_newline_check_python_not_skipped(self, tmp_path):
+        """Test that .py files are NOT skipped by the tool-generated logic."""
+        py_file = tmp_path / "script.py"
+        py_file.write_text("print('hello')")  # no trailing newline
+        assert should_skip_newline_check(str(py_file)) is False
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_skips_tool_generated(self, mock_get_files, tmp_path):
+        """Test that tool-generated files missing newlines do not cause failures."""
+        svg_file = tmp_path / "icon.svg"
+        svg_file.write_bytes(b"<svg></svg>")  # no trailing newline
+        patch_file = tmp_path / "fix.patch"
+        patch_file.write_bytes(b"--- a/foo\n+++ b/foo")  # no trailing newline
+        gpg_key = tmp_path / "RPM-GPG-KEY-redhat"
+        gpg_key.write_bytes(b"-----BEGIN PGP PUBLIC KEY BLOCK-----")
+
+        mock_get_files.return_value = [str(svg_file), str(patch_file), str(gpg_key)]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is True
+
+    @patch('scripts.mr_commit_linter.get_commit_modified_files')
+    def test_validate_files_newline_at_eof_py_still_checked(self, mock_get_files, tmp_path):
+        """Test that .py files are still checked even when tool-generated files are present."""
+        py_file = tmp_path / "script.py"
+        py_file.write_bytes(b"print('hello')")  # no trailing newline
+        svg_file = tmp_path / "icon.svg"
+        svg_file.write_bytes(b"<svg></svg>")  # no trailing newline — should be ignored
+
+        mock_get_files.return_value = [str(py_file), str(svg_file)]
+
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="RHELAI-1234: Test",
+            body="Test\n\nSigned-off-by: Dev"
+        )
+
+        result = validate_files_newline_at_eof(commit)
+        assert result.success is False
+        assert str(py_file) in result.error_message
+        assert str(svg_file) not in result.error_message
+
     @patch('scripts.mr_commit_linter.get_commit_modified_files')
     def test_validate_files_newline_at_eof_success(self, mock_get_files, tmp_path):
         """Test validation when all text files have newlines at EOF."""
