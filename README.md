@@ -15,10 +15,6 @@ This image includes the following linters:
 
 `quay.io/aipcc-cicd/central-linter`
 
-**Supported Architectures:** `amd64` (x86_64), `arm64` (aarch64)
-
-The image is built as a multi-architecture manifest, automatically selecting the correct architecture when pulled.
-
 **OpenShift Compatible:** The image supports running with arbitrary UIDs (OpenShift Security Context Constraints) by using GID 0 (root group) ownership with group write permissions.
 
 ## Usage
@@ -437,9 +433,7 @@ make push IMAGE_TAG=v0.1.0
 podman login quay.io
 ```
 
-**Local builds** create single-architecture images for your native platform (amd64 or arm64).
-
-**Multi-architecture images** are automatically built and published by the GitLab CI/CD pipeline.
+**Local builds** create images for your native platform.
 
 ### Available Make Targets
 
@@ -470,28 +464,24 @@ pip install pytest-cov
 pytest tests/ --cov=scripts.mr_commit_linter --cov-report=html
 ```
 
-Tests run in the CI pipeline during the `test` stage. The `test-unit` job ensures:
+Tests run in the CI pipeline during the `test` stage. The `test` job ensures:
 - All validation functions work correctly
 - Pattern matching is accurate
 - Error handling behaves as expected
 
 See `scripts/README.md` for more details on the test suite.
 
-### Multi-Arch Image Structure
+### Image Tags
 
 After the CI/CD pipeline completes, the registry contains:
 
 ```
-quay.io/aipcc-cicd/central-linter:latest          # Multi-arch manifest
-quay.io/aipcc-cicd/central-linter:abc1234         # Multi-arch manifest (commit SHA)
-quay.io/aipcc-cicd/central-linter:abc1234-amd64   # x86_64 specific image
-quay.io/aipcc-cicd/central-linter:abc1234-arm64   # ARM64 specific image
-quay.io/aipcc-cicd/central-linter:v0.1.0          # Multi-arch manifest (git tag)
+quay.io/aipcc-cicd/central-linter:latest    # Latest main-branch image
+quay.io/aipcc-cicd/central-linter:abc1234   # Commit SHA tag
+quay.io/aipcc-cicd/central-linter:v0.1.0   # Git tag (version release)
 ```
 
-When you `podman pull` or `docker pull` the `:latest` tag, the container runtime automatically selects the correct architecture-specific image for your platform.
-
-**Note:** Local builds using `make build` create single-architecture images only. Multi-architecture manifests are created exclusively by the CI/CD pipeline.
+**Note:** The `:latest` tag is only updated on main branch commits, not on every tag. This ensures backports or hotfix tags don't accidentally become "latest".
 
 ## Setup
 
@@ -513,38 +503,24 @@ Configure in Settings → CI/CD → Variables:
 
 The pipeline automatically:
 
-1. **Build** - Builds container images for both architectures in parallel on native runners:
-   - Builds amd64 image on x86_64 runner
-   - Builds arm64 image on aarch64 runner
-   - Saves each image as an OCI archive tarball artifact
+1. **Build** - Builds a single container image and pushes it to the GitLab registry with the commit SHA tag.
 2. **Lint & Test** - After build completes, lint and test jobs run in parallel:
-   - **Lint** (stage: lint) - Loads newly built amd64 image and runs `make linter-central`
-   - **Test amd64** (stage: test) - Loads amd64 image and validates all linters work
-   - **Test arm64** (stage: test) - Loads arm64 image and validates all linters work
-3. **Push** - Pushes images and creates multi-arch manifests:
-   - Loads images from tarballs and tags them
-   - Pushes architecture-specific images (`:commit-sha-amd64`, `:commit-sha-arm64`)
-   - Creates and pushes multi-arch manifests:
-     - Main branch → `:latest` and `:commit-sha`
-     - Git tags → `:v0.1.0` (version tag) and `:commit-sha`
+   - **Lint** (stage: lint) - Runs `make linter-central` inside the newly built image
+   - **Test** (stage: test) - Runs directly inside the built image, validating all linters and running unit tests
+3. **Push** - Pulls the built image from the GitLab registry and pushes it to quay.io:
+   - Always pushes `:commit-sha`
+   - Main branch → also pushes `:latest`
+   - Git tags → also pushes `:v0.1.0` (version tag)
 
-All manifests support both `amd64` and `arm64` architectures.
+**Pipeline stages:** The pipeline uses 4 stages (build → lint → test → push). Lint and test run in parallel after build completes.
 
-**Pipeline stages:** The pipeline uses 4 stages (build → lint → test → push) for organizational clarity, but lint and test jobs run in parallel after their build dependencies complete, improving efficiency.
-
-**Note:** The lint job uses the newly built image (not `:latest`), which allows linter configuration changes to be validated within the same merge request.
-
-**Note:** The `:latest` tag is only updated on main branch commits, not on every tag. This ensures backports or hotfix tags don't accidentally become "latest".
+**Note:** The lint and test jobs use the newly built image (not `:latest`), which allows linter configuration changes to be validated within the same merge request.
 
 #### Runner Requirements
 
-The CI/CD pipeline requires GitLab runners with both architectures:
-- **amd64 runner** - Tagged with `aipcc-small-x86_64` (for x86_64 builds)
-- **arm64 runner** - Tagged with `aipcc-small-aarch64` (for ARM64 builds)
-
-Both builds run **natively** on their respective runners for maximum performance and reliability (no emulation).
-
-**Note:** This follows the AIPCC standard runner naming convention used across all projects.
+The CI/CD pipeline uses the following runners:
+- **Default runner** - Tagged with `aipcc-k8s-cicd` (most jobs)
+- **Build and push jobs** - Tagged with `aipcc-small-x86_64`
 
 ### Creating a Release
 
