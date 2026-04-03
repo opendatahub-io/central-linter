@@ -51,6 +51,28 @@
       ],
       "datasourceTemplate": "npm",
       "depNameTemplate": "renovate"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "Containerfile"
+      ],
+      "matchStrings": [
+        "ARG SHELLCHECK_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "pypi",
+      "depNameTemplate": "shellcheck-py"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "Containerfile"
+      ],
+      "matchStrings": [
+        "ARG MARKDOWNLINT_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "markdownlint-cli"
     }
   ],
   "packageRules": [

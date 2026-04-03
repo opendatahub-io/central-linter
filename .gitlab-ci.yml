@@ -59,6 +59,8 @@ test:
     - ruff --version
     - yamllint --version
     - renovate-config-validator
+    - shellcheck --version
+    - markdownlint --version
     - pytest tests/ -v
     - scripts/vault-login.sh "$(scripts/vault-install.sh)" >/dev/null
 

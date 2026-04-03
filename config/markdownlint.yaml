@@ -1,0 +1,33 @@
+# Shared markdownlint configuration for AIPCC projects
+#
+# Philosophy: lenient enough for general use, strict enough to catch real issues.
+# Mirrors the approach used for ruff and yamllint shared configs.
+
+# MD013 - Line length: disable (long lines are common in technical docs)
+MD013: false
+
+# MD033 - Inline HTML: disable (HTML is often needed in README files)
+MD033: false
+
+# MD041 - First line should be top-level heading: disable (not all docs start with h1)
+MD041: false
+
+# MD040 - Fenced code blocks should have a language: disable (many blocks contain
+# plain text, file listings, or mixed content where a language tag adds no value)
+MD040: false
+
+# MD010 - Hard tabs: allow tabs inside code blocks (e.g. Makefile syntax requires tabs)
+MD010:
+  code_blocks: false
+
+# MD031 - Blanks around fences: disable (common to omit blank lines in technical docs)
+MD031: false
+
+# MD032 - Blanks around lists: disable (common to omit blank lines in technical docs)
+MD032: false
+
+# MD036 - Emphasis as heading: disable (bold labels like "Option A:" are common in READMEs)
+MD036: false
+
+# MD024 - Duplicate headings: disable (long docs often reuse section names like "Usage")
+MD024: false
