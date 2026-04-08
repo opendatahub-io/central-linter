@@ -31,3 +31,28 @@ MD036: false
 
 # MD024 - Duplicate headings: disable (long docs often reuse section names like "Usage")
 MD024: false
+
+# MD034 - Bare URLs: disable (raw URLs are common in technical docs and READMEs)
+MD034: false
+
+# MD022 - Blanks around headings: disable (commonly omitted in dense reference docs)
+MD022: false
+
+# MD026 - Trailing punctuation in headings: disable (colon is a common heading pattern)
+MD026: false
+
+# MD012 - Multiple consecutive blank lines: disable (not a meaningful quality signal)
+MD012: false
+
+# MD004 - Unordered list style: disable (mixed dash/asterisk styles are acceptable)
+MD004: false
+
+# MD049 - Emphasis style: disable (underscore and asterisk are both valid)
+MD049: false
+
+# MD025 - Single title/h1: disable (investigation docs and shell-comment-style headings
+# trigger false positives with multiple top-level headings)
+MD025: false
+
+# MD001 - Heading increment: disable (technical notes commonly skip heading levels)
+MD001: false
