@@ -35,14 +35,14 @@ default:
 build:
   extends: .default_rules
   stage: build
-  image: quay.io/buildah/stable:latest
+  image: quay.io/podman/stable:latest
   tags:
-    - aipcc-k8s-build
+    - aipcc-small-x86_64
   before_script:
-    - buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY" <<< "$CI_REGISTRY_PASSWORD"
+    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   script:
-    - buildah bud --format docker --tag ${BUILD_IMAGE} --file ${CONTAINERFILE_PATH} ${CONTEXT_DIR}
-    - buildah push ${BUILD_IMAGE}
+    - podman build --format docker --tag ${BUILD_IMAGE} --file ${CONTAINERFILE_PATH} ${CONTEXT_DIR}
+    - podman push ${BUILD_IMAGE}
 
 linter-central:
   extends: .default_rules
@@ -66,9 +66,9 @@ test:
 
 push:
   stage: push
-  image: quay.io/buildah/stable:latest
+  image: quay.io/podman/stable:latest
   tags:
-    - aipcc-k8s-build
+    - aipcc-small-x86_64
   needs: ["build", "test"]
   before_script:
     - |
@@ -79,15 +79,15 @@ push:
       QUAY_USERNAME=$("${VAULT_BIN}" kv get -field=username apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
       QUAY_PASSWORD=$("${VAULT_BIN}" kv get -field=password apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
 
-      buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY" <<< "$CI_REGISTRY_PASSWORD"
-      buildah login -u "$QUAY_USERNAME" --password-stdin quay.io <<< "$QUAY_PASSWORD"
+      echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+      echo "$QUAY_PASSWORD" | podman login -u "$QUAY_USERNAME" --password-stdin quay.io
   script:
-    - buildah pull ${BUILD_IMAGE}
+    - podman pull ${BUILD_IMAGE}
     - |
       push_tag() {
         local tag=$1
-        buildah tag ${BUILD_IMAGE} ${IMAGE_NAME}:${tag}
-        buildah push ${IMAGE_NAME}:${tag}
+        podman tag ${BUILD_IMAGE} ${IMAGE_NAME}:${tag}
+        podman push ${IMAGE_NAME}:${tag}
       }
 
       push_tag ${CI_COMMIT_SHORT_SHA}
