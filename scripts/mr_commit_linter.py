@@ -15,7 +15,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 
@@ -73,6 +73,44 @@ JIRA_INTERNAL_PATTERN = re.compile(r"INTERNAL", flags=re.MULTILINE)
 SIGNED_OFF_BY_PATTERN = re.compile(r"Signed-off-by: ", flags=re.MULTILINE)
 # Revert pattern: matches GitLab auto-generated revert titles
 REVERT_PATTERN = re.compile(r'^Revert "(.+)"$')
+# Pattern matching GitLab's default issue-closing keywords followed by Jira issue IDs.
+# Mirrors the trigger-word portion of GitLab's ISSUE_CLOSING_REGEX. When a closing
+# keyword + Jira ID appears in an MR title, description, or commit message, GitLab
+# auto-transitions that Jira issue on merge.
+# Ref: https://docs.gitlab.com/user/project/issues/managing_issues/#default-closing-pattern
+#
+# Supports: "Closes PROJ-123", "Fixes: PROJ-1, PROJ-2", "Resolves PROJ-1 and PROJ-2"
+# Uses space-only matching (not \s) to prevent false positives across newline boundaries
+# when scanning aggregated MR text.
+#
+# Note: this pattern is intentionally a superset of GitLab's Jira ID handling.
+# GitLab's closing regex likely only captures the first Jira ID in a comma-separated
+# list (the separator logic sits in the native-issue branch, not the Jira branch).
+# We match all IDs in the list to err on the side of caution - better to warn about
+# an Epic that might not be auto-closed than to miss one that would be.
+CLOSING_PHRASE_PATTERN = re.compile(
+    r'\b(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|implement(?:s|ed|ing)?)'
+    r':? +'
+    r'('
+    r'[A-Z][A-Z0-9_]+-\d+'
+    r'(?:'
+    r'(?: *, *(?:and +)?| +and +)'
+    r'[A-Z][A-Z0-9_]+-\d+'
+    r')*'
+    r')',
+    re.IGNORECASE
+)
+# Extract individual Jira-style issue IDs from a closing phrase match
+JIRA_ID_EXTRACT_PATTERN = re.compile(r'[A-Z][A-Z0-9_]+-\d+', re.IGNORECASE)
+
+# Protected issue type check configuration
+# Only AIPCC tickets are checked; add more keys here to extend coverage.
+# Values must be UPPERCASE (compared against uppercased Jira IDs).
+ISSUE_TYPE_CHECK_PROJECT_KEYS = {'AIPCC'}
+# Add more types here to extend protection (e.g. 'initiative').
+# Values must be lowercase (compared against lowercased API responses).
+PROTECTED_ISSUE_TYPES = {'epic'}
+SKIP_ISSUE_TYPE_CHECK_LABEL = 'skip-issue-type-check'
 
 # ============================================================================
 # DATA STRUCTURES
@@ -125,6 +163,28 @@ class GitLabConfig:
             api_url=os.getenv("CI_API_V4_URL"),
             api_token=os.getenv("GITLAB_API_TOKEN"),
             base_sha=base_sha,
+        )
+
+
+@dataclass
+class JiraConfig:
+    """Jira API configuration from environment variables."""
+    site_url: Optional[str]
+    username: Optional[str]
+    api_token: Optional[str]
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if Jira credentials are configured."""
+        return bool(self.site_url and self.username and self.api_token)
+
+    @classmethod
+    def from_environment(cls) -> "JiraConfig":
+        """Create configuration from environment variables."""
+        return cls(
+            site_url=os.getenv("JIRA_URL", "https://redhat.atlassian.net").rstrip("/"),
+            username=os.getenv("JIRA_USERNAME"),
+            api_token=os.getenv("JIRA_API_TOKEN"),
         )
 
 
@@ -437,6 +497,41 @@ def get_mr_commits_from_api(config: GitLabConfig) -> Optional[List[str]]:
 
 
 # ============================================================================
+# JIRA API UTILITIES
+# ============================================================================
+
+def get_jira_issue_type(issue_key: str, config: JiraConfig) -> Optional[str]:
+    """
+    Fetch the issue type for a Jira issue via the Jira Cloud REST API.
+
+    Calls GET /rest/api/2/issue/{key}?fields=issuetype with HTTP Basic Auth.
+    Returns the issue type name (e.g. "Epic", "Story", "Bug") or None if
+    the lookup fails.
+    """
+    url = f"{config.site_url}/rest/api/2/issue/{issue_key}?fields=issuetype"
+    try:
+        response = requests.get(
+            url,
+            auth=(config.username, config.api_token),
+            timeout=10,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            issue_type = data.get("fields", {}).get("issuetype", {}).get("name")
+            return issue_type
+        else:
+            logger.warning(
+                f"Jira API request for {issue_key} returned status {response.status_code} - skipping issue type check."
+            )
+            return None
+    except requests.RequestException as e:
+        logger.warning(
+            f"Jira API request for {issue_key} failed ({e}) - skipping issue type check."
+        )
+        return None
+
+
+# ============================================================================
 # VALIDATION FUNCTIONS
 # ============================================================================
 
@@ -667,6 +762,106 @@ def validate_mr_description(mr_info: MergeRequestInfo) -> ValidationResult:
         )
 
     return ValidationResult.ok()
+
+
+def validate_no_protected_type_closure(
+    config: GitLabConfig, jira_config: JiraConfig
+) -> List[str]:
+    """
+    Validate that no closing keyword + protected-type Jira ID pattern exists in the MR.
+
+    Scans MR title, MR description, and all commit messages for patterns like
+    "Fixes AIPCC-100" or "Closes AIPCC-100" where the referenced Jira issue
+    is a protected type (e.g. Epic). Such patterns would cause GitLab to
+    auto-transition the issue to "Done" on merge.
+
+    The check is skipped (with a warning) when:
+    - The 'skip-issue-type-check' MR label is present
+    - Jira credentials are not configured
+    - Running outside an MR pipeline (no CI_MERGE_REQUEST_TITLE)
+
+    Args:
+        config: GitLab API configuration (for fetching commit list)
+        jira_config: Jira API configuration (for issue type lookups)
+
+    Returns:
+        List of error messages (empty if no protected type closure patterns found)
+    """
+    # Skip when running outside MR pipeline
+    mr_title = os.getenv('CI_MERGE_REQUEST_TITLE')
+    if mr_title is None:
+        return []
+
+    labels = os.getenv('CI_MERGE_REQUEST_LABELS', '')
+    label_list = [label.strip() for label in labels.split(',') if label.strip()]
+    if SKIP_ISSUE_TYPE_CHECK_LABEL in label_list:
+        logger.warning(
+            f"MR label '{SKIP_ISSUE_TYPE_CHECK_LABEL}' detected - skipping protected issue type check"
+        )
+        return []
+
+    # Check Jira credentials
+    if not jira_config.is_configured:
+        logger.warning(
+            "Jira credentials not configured (JIRA_USERNAME/JIRA_API_TOKEN) - "
+            "skipping protected issue type check"
+        )
+        return []
+
+    # Build list of (source, text) components to scan
+    mr_description = os.getenv('CI_MERGE_REQUEST_DESCRIPTION', '')
+    components = []
+    if mr_title:
+        components.append(('MR title', mr_title))
+    if mr_description:
+        components.append(('MR description', mr_description))
+
+    # Gather commit messages
+    commit_shas = get_mr_commits_from_api(config)
+    if commit_shas is None:
+        commit_lines = get_commits_in_range(config.base_sha)
+        commit_shas = (
+            [line.split(' ')[0] for line in commit_lines]
+            if commit_lines else []
+        )
+    for sha in commit_shas:
+        commit = get_commit_info(sha)
+        if commit.title:
+            components.append(('commit message', commit.title))
+        if commit.body.strip():
+            components.append(('commit message', commit.body))
+
+    # Scan each component for closing keyword + Jira ID patterns.
+    found_ids: Dict[str, List[str]] = {}
+    for source, text in components:
+        for match in CLOSING_PHRASE_PATTERN.finditer(text):
+            ids = JIRA_ID_EXTRACT_PATTERN.findall(match.group(1))
+            for jira_id in ids:
+                jira_id = jira_id.upper()
+                project_key = jira_id.split('-', 1)[0]
+                if project_key not in ISSUE_TYPE_CHECK_PROJECT_KEYS:
+                    continue
+                locations = found_ids.setdefault(jira_id, [])
+                if source not in locations:
+                    locations.append(source)
+
+    if not found_ids:
+        return []
+
+    # Check each matched Jira ID for protected issue type
+    errors = []
+    for jira_id in sorted(found_ids):
+        issue_type = get_jira_issue_type(jira_id, jira_config)
+        if issue_type and issue_type.lower() in PROTECTED_ISSUE_TYPES:
+            locations = ', '.join(found_ids[jira_id])
+            errors.append(
+                f"ERROR: Closing keyword found with {issue_type} ticket {jira_id} (in {locations}).\n"
+                f"Merging this MR would auto-transition {issue_type} {jira_id} to 'Done' in Jira.\n"
+                f"Use 'Related to {jira_id}' or 'Ref {jira_id}' instead of closing keywords like Closes/Fixes/Resolves/Implements.\n"
+                f"To bypass this check, add the '{SKIP_ISSUE_TYPE_CHECK_LABEL}' label to the MR."
+            )
+
+    return errors
 
 
 # ============================================================================
@@ -1055,6 +1250,7 @@ def main() -> int:
 
     configure_git_safe_directory()
     config = GitLabConfig.from_environment()
+    jira_config = JiraConfig.from_environment()
 
     # Collect all errors from both commits and merge request
     all_errors = []
@@ -1064,6 +1260,10 @@ def main() -> int:
 
     mr_errors = validate_merge_request()
     all_errors.extend(mr_errors)
+
+    # MR-level: check for closing keywords + protected Jira issue types
+    type_errors = validate_no_protected_type_closure(config, jira_config)
+    all_errors.extend(type_errors)
 
     # Display all errors at once
     if all_errors:
