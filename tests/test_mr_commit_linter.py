@@ -5,6 +5,8 @@ Unit tests for mr_commit_linter.py
 Run with: pytest tests/
 """
 
+import requests as requests_lib
+
 import pytest
 from unittest.mock import Mock, patch
 
@@ -12,6 +14,7 @@ from scripts.mr_commit_linter import (
     CommitInfo,
     MergeRequestInfo,
     GitLabConfig,
+    JiraConfig,
     ValidationResult,
     contains_signed_off_by,
     has_jira_ticket,
@@ -21,17 +24,21 @@ from scripts.mr_commit_linter import (
     validate_commit_signed_off_by,
     validate_mr_title,
     validate_mr_description,
+    validate_no_protected_type_closure,
     read_linterignore_file,
     expand_directory_patterns,
     is_binary_file,
     should_skip_newline_check,
     validate_files_newline_at_eof,
     get_mr_commits_from_api,
+    get_jira_issue_type,
     validate_all_commits,
     validate_commit,
     is_merge_commit,
     is_parent_merge_commit,
     get_cherry_pick_source,
+    CLOSING_PHRASE_PATTERN,
+    JIRA_ID_EXTRACT_PATTERN,
     MIN_TITLE_DESCRIPTION_LENGTH,
     MIN_TITLE_DESCRIPTION_WORDS,
 )
@@ -1218,6 +1225,702 @@ class TestValidateAllCommits:
         errors = validate_all_commits(config)
         assert errors == []
 
+
+
+# ============================================================================
+# CLOSING PHRASE PATTERN TESTS
+# ============================================================================
+
+class TestClosingPhrasePattern:
+    """Tests for the closing keyword + Jira ID regex patterns."""
+
+    # --- Patterns that SHOULD match ---
+
+    @pytest.mark.parametrize("text,expected_ids", [
+        ("Closes AIPCC-100", ["AIPCC-100"]),
+        ("closes AIPCC-100", ["AIPCC-100"]),
+        ("Close AIPCC-100", ["AIPCC-100"]),
+        ("Closed AIPCC-100", ["AIPCC-100"]),
+        ("Closing AIPCC-100", ["AIPCC-100"]),
+        ("Fixes AIPCC-100", ["AIPCC-100"]),
+        ("Fix AIPCC-100", ["AIPCC-100"]),
+        ("Fixed AIPCC-100", ["AIPCC-100"]),
+        ("Fixing AIPCC-100", ["AIPCC-100"]),
+        ("Resolves AIPCC-100", ["AIPCC-100"]),
+        ("Resolve AIPCC-100", ["AIPCC-100"]),
+        ("Resolved AIPCC-100", ["AIPCC-100"]),
+        ("Resolving AIPCC-100", ["AIPCC-100"]),
+        ("Implements AIPCC-100", ["AIPCC-100"]),
+        ("Implement AIPCC-100", ["AIPCC-100"]),
+        ("Implemented AIPCC-100", ["AIPCC-100"]),
+        ("Implementing AIPCC-100", ["AIPCC-100"]),
+    ])
+    def test_all_keyword_conjugations(self, text, expected_ids):
+        """Test all closing keyword conjugations match."""
+        matches = CLOSING_PHRASE_PATTERN.findall(text)
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert [i.upper() for i in ids] == expected_ids
+
+    def test_optional_colon_after_keyword(self):
+        """Test that optional colon after keyword is supported."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Fixes: AIPCC-100")
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert ids[0].upper() == "AIPCC-100"
+
+    def test_comma_separated_ids(self):
+        """Test comma-separated Jira IDs after closing keyword."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Closes AIPCC-100, AIPCC-101")
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert [i.upper() for i in ids] == ["AIPCC-100", "AIPCC-101"]
+
+    def test_and_separated_ids(self):
+        """Test 'and'-separated Jira IDs after closing keyword."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Resolves AIPCC-100 and AIPCC-101")
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert [i.upper() for i in ids] == ["AIPCC-100", "AIPCC-101"]
+
+    def test_comma_and_separated_ids(self):
+        """Test comma+and separated Jira IDs."""
+        matches = CLOSING_PHRASE_PATTERN.findall(
+            "Fixed: AIPCC-100, AIPCC-101 and AIPCC-102"
+        )
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert [i.upper() for i in ids] == ["AIPCC-100", "AIPCC-101", "AIPCC-102"]
+
+    def test_case_insensitive_keyword(self):
+        """Test that keywords are matched case-insensitively."""
+        for text in ["FIXES AIPCC-100", "fixes AIPCC-100", "Fixes AIPCC-100"]:
+            matches = CLOSING_PHRASE_PATTERN.findall(text)
+            assert len(matches) == 1, f"Failed for: {text}"
+
+    def test_multiple_spaces_between_keyword_and_id(self):
+        """Test multiple spaces between keyword and Jira ID."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Fixes   AIPCC-100")
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert ids[0].upper() == "AIPCC-100"
+
+    def test_various_project_keys(self):
+        """Test different Jira project key formats."""
+        for key in ["RHELAI-1234", "RHOAIENG-5678", "AB-1", "PROJ_KEY-99"]:
+            matches = CLOSING_PHRASE_PATTERN.findall(f"Fixes {key}")
+            assert len(matches) == 1, f"Failed for key: {key}"
+
+    def test_tab_separator_no_match(self):
+        """Test that tab between keyword and Jira ID does NOT match."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Closes\tAIPCC-100")
+        assert len(matches) == 0
+
+    def test_colon_without_space_no_match(self):
+        """Test that colon without trailing space does NOT match."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Closes:AIPCC-100")
+        assert len(matches) == 0
+
+    def test_three_id_comma_list(self):
+        """Test three comma-separated Jira IDs."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Closes AIPCC-100, AIPCC-101, AIPCC-102")
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert [i.upper() for i in ids] == ["AIPCC-100", "AIPCC-101", "AIPCC-102"]
+
+    def test_multiple_closing_phrases_in_text(self):
+        """Test multiple closing phrases found via finditer."""
+        text = "Closes AIPCC-100. Also fixes AIPCC-200"
+        matches = CLOSING_PHRASE_PATTERN.findall(text)
+        assert len(matches) == 2
+        assert JIRA_ID_EXTRACT_PATTERN.findall(matches[0]) == ["AIPCC-100"]
+        assert JIRA_ID_EXTRACT_PATTERN.findall(matches[1]) == ["AIPCC-200"]
+
+    def test_lowercase_jira_id_matches(self):
+        """Test that lowercase Jira ID matches due to re.IGNORECASE."""
+        matches = CLOSING_PHRASE_PATTERN.findall("fixes aipcc-100")
+        assert len(matches) == 1
+        ids = JIRA_ID_EXTRACT_PATTERN.findall(matches[0])
+        assert [i.upper() for i in ids] == ["AIPCC-100"]
+
+    def test_keyword_substring_unresolved_no_match(self):
+        """Test that 'unresolved' (contains 'resolve') does NOT match."""
+        matches = CLOSING_PHRASE_PATTERN.findall("unresolved AIPCC-100")
+        assert len(matches) == 0
+
+    # --- Patterns that should NOT match ---
+
+    def test_no_match_bare_jira_id(self):
+        """Test that bare Jira ID without closing keyword does not match."""
+        matches = CLOSING_PHRASE_PATTERN.findall("AIPCC-100: Fix the bug")
+        assert len(matches) == 0
+
+    def test_no_match_jira_id_before_keyword(self):
+        """Test standard commit format (ID before keyword) does not match."""
+        matches = CLOSING_PHRASE_PATTERN.findall("AIPCC-100: Fix authentication bug")
+        assert len(matches) == 0
+
+    def test_no_match_related_to(self):
+        """Test 'Related to' does not match as a closing keyword."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Related to AIPCC-100")
+        assert len(matches) == 0
+
+    def test_no_match_see_also(self):
+        """Test 'See also' does not match."""
+        matches = CLOSING_PHRASE_PATTERN.findall("See also AIPCC-100")
+        assert len(matches) == 0
+
+    def test_no_match_ref(self):
+        """Test 'Ref' does not match."""
+        matches = CLOSING_PHRASE_PATTERN.findall("Ref AIPCC-100")
+        assert len(matches) == 0
+
+    def test_no_cross_newline_match(self):
+        """Test that keyword and Jira ID separated by newline do NOT match."""
+        # This is the critical false-positive case from the consultation
+        text = "Ready to close\nAIPCC-100: Add feature"
+        matches = CLOSING_PHRASE_PATTERN.findall(text)
+        assert len(matches) == 0
+
+    def test_no_cross_newline_match_fix(self):
+        """Test cross-newline with 'fix' keyword does not match."""
+        text = "We need to fix\nAIPCC-100: Update config"
+        matches = CLOSING_PHRASE_PATTERN.findall(text)
+        assert len(matches) == 0
+
+    def test_keyword_in_middle_of_word_no_match(self):
+        """Test that keyword embedded in another word does not match."""
+        # 'prefix' contains 'fix' but \b prevents matching
+        matches = CLOSING_PHRASE_PATTERN.findall("prefix AIPCC-100")
+        assert len(matches) == 0
+
+
+# ============================================================================
+# JIRA CONFIG TESTS
+# ============================================================================
+
+class TestJiraConfig:
+    """Tests for JiraConfig dataclass."""
+
+    def test_from_environment_with_all_vars(self):
+        """Test JiraConfig creation with all environment variables set."""
+        with patch.dict('os.environ', {
+            'JIRA_URL': 'https://jira.example.com',
+            'JIRA_USERNAME': 'user@example.com',
+            'JIRA_API_TOKEN': 'secret-token',
+        }):
+            config = JiraConfig.from_environment()
+            assert config.site_url == 'https://jira.example.com'
+            assert config.username == 'user@example.com'
+            assert config.api_token == 'secret-token'
+            assert config.is_configured is True
+
+    def test_from_environment_default_url(self):
+        """Test JiraConfig uses default URL when JIRA_URL is not set."""
+        with patch.dict('os.environ', {
+            'JIRA_USERNAME': 'user@example.com',
+            'JIRA_API_TOKEN': 'secret-token',
+        }, clear=True):
+            config = JiraConfig.from_environment()
+            assert config.site_url == 'https://redhat.atlassian.net'
+            assert config.is_configured is True
+
+    def test_from_environment_strips_trailing_slash(self):
+        """Test that trailing slash is stripped from JIRA_URL."""
+        with patch.dict('os.environ', {
+            'JIRA_URL': 'https://jira.example.com/',
+            'JIRA_USERNAME': 'user@example.com',
+            'JIRA_API_TOKEN': 'secret-token',
+        }):
+            config = JiraConfig.from_environment()
+            assert config.site_url == 'https://jira.example.com'
+
+    def test_not_configured_missing_username(self):
+        """Test is_configured is False when username is missing."""
+        config = JiraConfig(
+            site_url='https://jira.example.com',
+            username=None,
+            api_token='token',
+        )
+        assert config.is_configured is False
+
+    def test_not_configured_missing_token(self):
+        """Test is_configured is False when token is missing."""
+        config = JiraConfig(
+            site_url='https://jira.example.com',
+            username='user',
+            api_token=None,
+        )
+        assert config.is_configured is False
+
+    def test_not_configured_missing_both(self):
+        """Test is_configured is False when both credentials are missing."""
+        with patch.dict('os.environ', {}, clear=True):
+            config = JiraConfig.from_environment()
+            assert config.is_configured is False
+
+
+
+# ============================================================================
+# JIRA API TESTS
+# ============================================================================
+
+class TestGetJiraIssueType:
+    """Tests for get_jira_issue_type function."""
+
+    def _make_config(self):
+        return JiraConfig(
+            site_url='https://jira.example.com',
+            username='user@example.com',
+            api_token='secret-token',
+        )
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_returns_issue_type(self, mock_get):
+        """Test successful issue type retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'fields': {'issuetype': {'name': 'Epic'}}
+        }
+        mock_get.return_value = mock_response
+
+        config = self._make_config()
+        result = get_jira_issue_type('AIPCC-100', config)
+        assert result == 'Epic'
+
+        mock_get.assert_called_once_with(
+            'https://jira.example.com/rest/api/2/issue/AIPCC-100?fields=issuetype',
+            auth=('user@example.com', 'secret-token'),
+            timeout=10,
+        )
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_returns_story_type(self, mock_get):
+        """Test retrieval of non-Epic issue type."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'fields': {'issuetype': {'name': 'Story'}}
+        }
+        mock_get.return_value = mock_response
+
+        config = self._make_config()
+        result = get_jira_issue_type('AIPCC-200', config)
+        assert result == 'Story'
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_api_error_returns_none(self, mock_get):
+        """Test that API errors return None."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_get.return_value = mock_response
+
+        config = self._make_config()
+        result = get_jira_issue_type('AIPCC-999', config)
+        assert result is None
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_network_error_returns_none(self, mock_get):
+        """Test that network errors return None."""
+        mock_get.side_effect = requests_lib.RequestException("Connection timeout")
+
+        config = self._make_config()
+        result = get_jira_issue_type('AIPCC-100', config)
+        assert result is None
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    def test_auth_error_returns_none(self, mock_get):
+        """Test that authentication errors return None."""
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_get.return_value = mock_response
+
+        config = self._make_config()
+        result = get_jira_issue_type('AIPCC-100', config)
+        assert result is None
+
+
+# ============================================================================
+# PROTECTED TYPE CLOSURE VALIDATION TESTS
+# ============================================================================
+
+class TestValidateNoProtectedTypeClosure:
+    """Tests for validate_no_protected_type_closure function."""
+
+    def _make_gitlab_config(self):
+        return GitLabConfig(
+            project_id='12345',
+            mr_iid='678',
+            api_url='https://gitlab.example.com/api/v4',
+            api_token='gitlab-token',
+            base_sha='main',
+        )
+
+    def _make_jira_config(self):
+        return JiraConfig(
+            site_url='https://jira.example.com',
+            username='user@example.com',
+            api_token='jira-token',
+        )
+
+    def _mock_jira_type(self, mock_get, type_map):
+        """Helper to mock Jira API responses for multiple issue keys."""
+        def side_effect(url, **kwargs):
+            resp = Mock()
+            for key, issue_type in type_map.items():
+                # Match full issue key in URL path to avoid
+                # substring collisions (AIPCC-10 matching AIPCC-100)
+                if f"/issue/{key}?" in url:
+                    resp.status_code = 200
+                    resp.json.return_value = {
+                        'fields': {'issuetype': {'name': issue_type}}
+                    }
+                    return resp
+            resp.status_code = 404
+            return resp
+        mock_get.side_effect = side_effect
+
+    # --- Detection tests ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100\n\nSigned-off-by: Dev',
+    })
+    def test_epic_in_mr_description(self, mock_commits, mock_get):
+        """Test detection of closing keyword + Epic ID in MR description."""
+        mock_commits.return_value = []
+        self._mock_jira_type(mock_get, {'AIPCC-100': 'Epic'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 1
+        assert 'AIPCC-100' in errors[0]
+        assert 'Epic' in errors[0]
+        assert 'MR description' in errors[0]
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'Closes AIPCC-100',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev',
+    })
+    def test_epic_in_mr_title(self, mock_commits, mock_get):
+        """Test detection of closing keyword + Epic ID in MR title."""
+        mock_commits.return_value = []
+        self._mock_jira_type(mock_get, {'AIPCC-100': 'Epic'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 1
+        assert 'MR title' in errors[0]
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch('scripts.mr_commit_linter.get_commit_info')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev',
+    })
+    def test_epic_in_commit_message(self, mock_info, mock_commits, mock_get):
+        """Test detection of closing keyword + Epic ID in commit message."""
+        mock_commits.return_value = ['abc123']
+        mock_info.return_value = CommitInfo(
+            commit_id='abc123',
+            title='AIPCC-999: Add feature',
+            body='Resolves AIPCC-100\n\nSigned-off-by: Dev',
+        )
+        self._mock_jira_type(mock_get, {'AIPCC-100': 'Epic'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 1
+        assert 'commit message' in errors[0]
+
+    # --- Non-detection tests (should pass) ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-100: Fix the bug',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Related to AIPCC-100\n\nSigned-off-by: Dev',
+    })
+    def test_bare_epic_id_passes(self, mock_commits, mock_get):
+        """Test that bare Epic ID without closing keyword passes."""
+        mock_commits.return_value = []
+        # Jira API should NOT be called since no closing pattern is found
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+        mock_get.assert_not_called()
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-200\n\nSigned-off-by: Dev',
+    })
+    def test_non_epic_with_closing_keyword_passes(self, mock_commits, mock_get):
+        """Test that non-Epic ticket with closing keyword passes."""
+        mock_commits.return_value = []
+        self._mock_jira_type(mock_get, {'AIPCC-200': 'Story'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Closes AIPCC-200, AIPCC-100\n\nSigned-off-by: Dev',
+    })
+    def test_mixed_epic_and_non_epic(self, mock_commits, mock_get):
+        """Test comma-separated IDs where one is Epic and one is not."""
+        mock_commits.return_value = []
+        self._mock_jira_type(mock_get, {
+            'AIPCC-200': 'Story',
+            'AIPCC-100': 'Epic',
+        })
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        # Only the Epic should cause an error
+        assert len(errors) == 1
+        assert 'AIPCC-100' in errors[0]
+
+    # --- Project key filtering ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes RHELAI-500\n\nSigned-off-by: Dev',
+    })
+    def test_non_aipcc_ticket_skipped(self, mock_commits, mock_get):
+        """Test that non-AIPCC tickets are not checked even with closing keyword."""
+        mock_commits.return_value = []
+        # Jira API should NOT be called for non-AIPCC tickets
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+        mock_get.assert_not_called()
+
+    # --- Cross-boundary safety ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch('scripts.mr_commit_linter.get_commit_info')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'We need to close',
+    })
+    def test_no_cross_boundary_false_positive(self, mock_info, mock_commits, mock_get):
+        """Test that keyword at end of description + ID at start of commit
+        does NOT produce a false positive."""
+        mock_commits.return_value = ['abc123']
+        mock_info.return_value = CommitInfo(
+            commit_id='abc123',
+            title='AIPCC-100: Update config',
+            body='Signed-off-by: Dev',
+        )
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+        mock_get.assert_not_called()
+
+    # --- Skip conditions ---
+
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100',
+        'CI_MERGE_REQUEST_LABELS': 'bug, skip-issue-type-check, urgent',
+    })
+    def test_skip_with_label(self, mock_commits):
+        """Test that skip-issue-type-check label is detected among multiple labels."""
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+        mock_commits.assert_not_called()  # Should not even fetch commits
+
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100',
+        'CI_MERGE_REQUEST_LABELS': 'skip-issue-type-check',
+    })
+    def test_skip_with_label_alone(self, mock_commits):
+        """Test skip-issue-type-check label when it is the only label (no comma splitting)."""
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100',
+    })
+    def test_skip_with_missing_jira_credentials(self, mock_commits):
+        """Test that missing Jira credentials skip the check."""
+        jira_config = JiraConfig(
+            site_url='https://jira.example.com',
+            username=None,
+            api_token=None,
+        )
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), jira_config
+        )
+        assert len(errors) == 0
+
+    @patch.dict('os.environ', {}, clear=True)
+    def test_skip_when_running_locally(self):
+        """Test that the check is skipped when not in an MR pipeline."""
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+
+    # --- API failure handling ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100',
+    })
+    def test_api_failure_skips_check_for_that_id(self, mock_commits, mock_get):
+        """Test that Jira API failure skips the check for that ID."""
+        mock_commits.return_value = []
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_get.return_value = mock_response
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0  # API failure -> skip, not error
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100',
+    })
+    def test_network_failure_skips_check(self, mock_commits, mock_get):
+        """Test that network failure skips the check."""
+        mock_commits.return_value = []
+        mock_get.side_effect = requests_lib.RequestException("timeout")
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 0
+
+    # --- Optional colon variant ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes: AIPCC-100\n\nSigned-off-by: Dev',
+    })
+    def test_colon_variant_detects_epic(self, mock_commits, mock_get):
+        """Test that 'Fixes: AIPCC-100' variant detects Epic."""
+        mock_commits.return_value = []
+        self._mock_jira_type(mock_get, {'AIPCC-100': 'Epic'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 1
+
+    # --- Commit fallback to git log ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch('scripts.mr_commit_linter.get_commits_in_range')
+    @patch('scripts.mr_commit_linter.get_commit_info')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description',
+    })
+    def test_fallback_to_git_log(self, mock_info, mock_range, mock_commits, mock_get):
+        """Test fallback to git log when GitLab API is unavailable."""
+        mock_commits.return_value = None  # API unavailable
+        mock_range.return_value = ['abc123 AIPCC-999: Add feature']
+        mock_info.return_value = CommitInfo(
+            commit_id='abc123',
+            title='AIPCC-999: Add feature',
+            body='Implements AIPCC-100\n\nSigned-off-by: Dev',
+        )
+        self._mock_jira_type(mock_get, {'AIPCC-100': 'Epic'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 1
+        mock_range.assert_called_once()
+
+    # --- Error message content ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100',
+    })
+    def test_error_message_content(self, mock_commits, mock_get):
+        """Test that error message contains helpful information."""
+        mock_commits.return_value = []
+        self._mock_jira_type(mock_get, {'AIPCC-100': 'Epic'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 1
+        assert 'AIPCC-100' in errors[0]
+        assert 'Epic' in errors[0]
+        assert 'auto-transition' in errors[0]
+        assert 'skip-issue-type-check' in errors[0]
+        assert 'Related to' in errors[0] or 'Ref' in errors[0]
+
+    # --- INTERNAL commit handling ---
+
+    @patch('scripts.mr_commit_linter.requests.get')
+    @patch('scripts.mr_commit_linter.get_mr_commits_from_api')
+    @patch('scripts.mr_commit_linter.get_commit_info')
+    @patch.dict('os.environ', {
+        'CI_MERGE_REQUEST_TITLE': 'INTERNAL: Update docs',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev',
+    })
+    def test_internal_commit_still_checked(self, mock_info, mock_commits, mock_get):
+        """Test that INTERNAL commits are still scanned for epic closure."""
+        mock_commits.return_value = ['abc123']
+        mock_info.return_value = CommitInfo(
+            commit_id='abc123',
+            title='INTERNAL: Update docs',
+            body='Closes AIPCC-100\n\nSigned-off-by: Dev',
+        )
+        self._mock_jira_type(mock_get, {'AIPCC-100': 'Epic'})
+
+        errors = validate_no_protected_type_closure(
+            self._make_gitlab_config(), self._make_jira_config()
+        )
+        assert len(errors) == 1
 
 # ============================================================================
 # INTEGRATION TESTS

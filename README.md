@@ -507,6 +507,11 @@ Configure in Settings → CI/CD → Variables:
 |----------|------|-----------|--------|
 | `QUAY_USERNAME` | Variable | Yes | No |
 | `QUAY_PASSWORD` | Variable | Yes | Yes |
+| `JIRA_USERNAME` | Variable | No | No |
+| `JIRA_API_TOKEN` | Variable | No | Yes |
+| `JIRA_URL` | Variable | No | No |
+
+**Note:** `JIRA_USERNAME` and `JIRA_API_TOKEN` are required on consumer projects (not this repo) for the protected issue type check. `JIRA_URL` defaults to `https://redhat.atlassian.net` and only needs to be set if a consumer project uses a different Jira instance. The check gracefully skips if credentials are not configured.
 
 ### CI/CD Pipeline
 
@@ -822,6 +827,13 @@ The MR/commit linter validates merge requests and commit messages against AIPCC 
 **Bot exemptions:**
 - Commits/MRs created by `platform-engineering-bot` or `aipcc-cicd-bot` are automatically skipped
 
+**Protected issue type closure prevention (CI only):**
+- Detects closing keywords (`Closes`, `Fixes`, `Resolves`, `Implements` and their conjugations) paired with Jira IDs in MR titles, descriptions, and commit messages
+- Queries the Jira API to check if the referenced issue is a protected type (currently: Epic)
+- Only enforced for AIPCC project tickets
+- Bypass with the `skip-issue-type-check` MR label (e.g., for ADRs or feature refinement docs that legitimately reference Epics)
+- Requires `JIRA_USERNAME` and `JIRA_API_TOKEN` CI variables; gracefully skips if not configured
+
 ### Usage
 
 ```bash
@@ -838,11 +850,13 @@ make linter-mr-commit
 - MR title/description checks are skipped (no CI environment variables)
 - Commit message checks still run against your branch commits
 - Compares your branch against `main` branch (or `CI_MERGE_REQUEST_DIFF_BASE_SHA` if set)
+- Protected issue type check is skipped (requires CI environment)
 
 **In GitLab CI:**
 - Checks all commits in the merge request
 - Validates MR title and description
 - Uses `CI_MERGE_REQUEST_DIFF_BASE_SHA` to determine commit range
+- Checks for closing keywords paired with protected Jira issue types (requires `JIRA_USERNAME`/`JIRA_API_TOKEN`)
 
 ### INTERNAL File Allowlist
 
@@ -894,6 +908,11 @@ Fix: Add a meaningful commit description before the Signed-off-by line
 ERROR: path/to/file.txt is not in /home/linter/.config/linterignore
 ```
 Fix: Either use a JIRA ticket instead of INTERNAL, or add the file to linterignore
+
+```
+ERROR: Closing keyword found with Epic ticket AIPCC-123 (in MR description).
+```
+Fix: Use `Related to AIPCC-123` or `Ref AIPCC-123` instead of closing keywords, or add the `skip-issue-type-check` label to the MR
 
 For more details, see [AIPCC Commit and Merge Request Guidelines](https://docs.google.com/document/d/1TAicyqGKKELzaYL4o-Plz2s7tFUhOctZFzHErMQSc8c).
 
