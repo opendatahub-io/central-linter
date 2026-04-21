@@ -4,7 +4,8 @@ from typing import Optional
 
 import requests
 
-from config import JiraConfig, logger
+from config import JiraConfig
+from log import logger
 
 
 def get_jira_issue_type(issue_key: str, config: JiraConfig) -> Optional[str]:

@@ -1,21 +1,10 @@
-"""
-Constants, configuration, data structures, and logging for the AIPCC linter.
-"""
+"""Constants, configuration, and data structures for the AIPCC linter."""
 
-import logging
 import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
-try:
-    from colorama import Fore, init
-    init(autoreset=True)
-    HAS_COLOR = True
-except ImportError:
-    HAS_COLOR = False
 
 # ============================================================================
 # CONSTANTS AND CONFIGURATION
@@ -194,34 +183,3 @@ class ValidationResult:
     def fail(cls, message: str) -> "ValidationResult":
         """Create a failed validation result."""
         return cls(success=False, error_message=message)
-
-
-# ============================================================================
-# LOGGING SETUP
-# ============================================================================
-
-def setup_logging() -> logging.Logger:
-    """Configure logging for the script."""
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-
-    # Only add handler if not already present (avoid duplicate handlers)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    return logger
-
-
-logger = setup_logging()
-
-
-def error(message: str) -> None:
-    """Print error message to stderr with red color if available."""
-    if HAS_COLOR:
-        print(Fore.RED + message, file=sys.stderr)
-    else:
-        print(message, file=sys.stderr)

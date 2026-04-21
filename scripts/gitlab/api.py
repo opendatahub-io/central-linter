@@ -4,7 +4,8 @@ from typing import List, Optional
 
 import requests
 
-from config import GitLabConfig, logger
+from config import GitLabConfig
+from log import logger
 
 
 def get_mr_author(config: GitLabConfig) -> Optional[str]:
