@@ -4,7 +4,7 @@ spec:
       default: lint
       description: "Stage for the central linter job"
     IMAGE:
-      default: quay.io/aipcc-cicd/central-linter:v0.2.1
+      default: quay.io/aipcc-cicd/central-linter:v0.3.0
       description: "Container image to use for linting"
 ---
 linter-central:
