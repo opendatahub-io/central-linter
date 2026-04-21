@@ -90,7 +90,7 @@ else
     BRANCH="release/${VERSION}"
     git checkout -b "$BRANCH"
 
-    sed -i "s|quay.io/aipcc-cicd/central-linter:v[0-9][0-9.]*|quay.io/aipcc-cicd/central-linter:${VERSION}|g" \
+    perl -i -pe "s|quay.io/aipcc-cicd/central-linter:v[0-9][0-9.]*|quay.io/aipcc-cicd/central-linter:${VERSION}|g" \
         templates/linter-central.yml
     echo "Updated templates/linter-central.yml"
 
