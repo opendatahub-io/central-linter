@@ -6,9 +6,10 @@ from typing import Dict, List
 from config import (
     CLOSING_PHRASE_PATTERN, ISSUE_TYPE_CHECK_PROJECT_KEYS, JIRA_ID_EXTRACT_PATTERN,
     MergeRequestInfo, GitLabConfig, JiraConfig, POLICY_MESSAGE,
-    PROTECTED_ISSUE_TYPES, SKIP_ISSUE_TYPE_CHECK_LABEL, ValidationResult, logger,
+    PROTECTED_ISSUE_TYPES, SKIP_ISSUE_TYPE_CHECK_LABEL, ValidationResult,
 )
-from git.commands import get_commit_info, get_commits_in_range
+from log import logger
+from git_utils.commands import get_commit_info, get_commits_in_range
 from gitlab.api import get_mr_commits_from_api
 from jira.api import get_jira_issue_type
 from validators.title import contains_signed_off_by, validate_title_format

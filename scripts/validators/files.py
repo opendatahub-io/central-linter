@@ -8,9 +8,10 @@ from typing import List, Set
 from config import (
     CommitInfo, LINTERIGNORE_PATHS, POLICY_MESSAGE,
     TOOL_GENERATED_EXTENSIONS, TOOL_GENERATED_FILENAME_PATTERNS,
-    ValidationResult, logger,
+    ValidationResult,
 )
-from git.commands import get_commit_modified_files
+from log import logger
+from git_utils.commands import get_commit_modified_files
 
 
 def is_binary_file(file_path: str) -> bool:

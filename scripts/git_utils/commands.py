@@ -4,7 +4,8 @@ import subprocess
 import sys
 from typing import List, Tuple
 
-from config import CommitInfo, logger
+from config import CommitInfo
+from log import logger
 
 
 def run_git_command(args: List[str], check: bool = True) -> Tuple[bool, str]:

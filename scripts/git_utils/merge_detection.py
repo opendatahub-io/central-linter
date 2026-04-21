@@ -3,8 +3,9 @@
 import re
 from typing import Optional
 
-from config import CommitInfo, logger
-from git.commands import run_git_command
+from config import CommitInfo
+from log import logger
+from git_utils.commands import run_git_command
 
 
 def is_merge_commit(commit_id: str) -> bool:

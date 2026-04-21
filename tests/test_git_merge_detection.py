@@ -1,9 +1,9 @@
-"""Tests for git.merge_detection module."""
+"""Tests for git_utils.merge_detection module."""
 
 from unittest.mock import patch
 
 from config import CommitInfo
-from git.merge_detection import (
+from git_utils.merge_detection import (
     is_merge_commit,
     get_cherry_pick_source,
     is_parent_merge_commit,
@@ -12,17 +12,17 @@ from git.merge_detection import (
 
 
 class TestIsMergeCommit:
-    @patch('git.merge_detection.run_git_command')
+    @patch('git_utils.merge_detection.run_git_command')
     def test_true_with_two_parents(self, mock_git):
         mock_git.return_value = (True, "abc123 def456 ghi789\n")
         assert is_merge_commit("abc123") is True
 
-    @patch('git.merge_detection.run_git_command')
+    @patch('git_utils.merge_detection.run_git_command')
     def test_false_with_one_parent(self, mock_git):
         mock_git.return_value = (True, "abc123 def456\n")
         assert is_merge_commit("abc123") is False
 
-    @patch('git.merge_detection.run_git_command')
+    @patch('git_utils.merge_detection.run_git_command')
     def test_git_failure(self, mock_git):
         mock_git.return_value = (False, "error")
         assert is_merge_commit("abc123") is False
@@ -47,7 +47,7 @@ class TestGetCherryPickSource:
 
 
 class TestIsParentMergeCommit:
-    @patch('git.merge_detection.is_merge_commit')
+    @patch('git_utils.merge_detection.is_merge_commit')
     def test_true_cherry_picked_merge(self, mock_is_merge):
         mock_is_merge.return_value = True
         commit = CommitInfo(
@@ -58,7 +58,7 @@ class TestIsParentMergeCommit:
         assert is_parent_merge_commit(commit) is True
         mock_is_merge.assert_called_once_with("def456789")
 
-    @patch('git.merge_detection.is_merge_commit')
+    @patch('git_utils.merge_detection.is_merge_commit')
     def test_false_cherry_picked_regular(self, mock_is_merge):
         mock_is_merge.return_value = False
         commit = CommitInfo(
@@ -79,14 +79,14 @@ class TestIsParentMergeCommit:
 
 
 class TestShouldSkipCommitValidation:
-    @patch('git.merge_detection.is_merge_commit')
+    @patch('git_utils.merge_detection.is_merge_commit')
     def test_skips_merge_commit(self, mock_is_merge):
         mock_is_merge.return_value = True
         commit = CommitInfo(commit_id="abc123", title="Merge", body="")
         assert should_skip_commit_validation(commit) is True
 
-    @patch('git.merge_detection.is_parent_merge_commit')
-    @patch('git.merge_detection.is_merge_commit')
+    @patch('git_utils.merge_detection.is_parent_merge_commit')
+    @patch('git_utils.merge_detection.is_merge_commit')
     def test_skips_cherry_picked_merge(self, mock_is_merge, mock_parent):
         mock_is_merge.return_value = False
         mock_parent.return_value = True
@@ -97,8 +97,8 @@ class TestShouldSkipCommitValidation:
         )
         assert should_skip_commit_validation(commit) is True
 
-    @patch('git.merge_detection.is_parent_merge_commit')
-    @patch('git.merge_detection.is_merge_commit')
+    @patch('git_utils.merge_detection.is_parent_merge_commit')
+    @patch('git_utils.merge_detection.is_merge_commit')
     def test_does_not_skip_regular(self, mock_is_merge, mock_parent):
         mock_is_merge.return_value = False
         mock_parent.return_value = False

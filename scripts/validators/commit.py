@@ -2,9 +2,10 @@
 
 from typing import List
 
-from config import CommitInfo, POLICY_MESSAGE, ValidationResult, logger
-from git.commands import get_commit_modified_files
-from git.merge_detection import should_skip_commit_validation
+from config import CommitInfo, POLICY_MESSAGE, ValidationResult
+from log import logger
+from git_utils.commands import get_commit_modified_files
+from git_utils.merge_detection import should_skip_commit_validation
 from validators.files import find_linterignore_file, read_linterignore_file, expand_directory_patterns, validate_files_newline_at_eof
 from validators.title import has_internal_keyword, validate_title_format, contains_signed_off_by
 

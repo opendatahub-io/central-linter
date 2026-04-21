@@ -1,21 +1,21 @@
-"""Tests for git.commands module."""
+"""Tests for git_utils.commands module."""
 
 import subprocess
 from unittest.mock import patch, MagicMock
 
 from config import CommitInfo
-from git.commands import run_git_command, get_commits_in_range, get_commit_info, get_commit_modified_files
+from git_utils.commands import run_git_command, get_commits_in_range, get_commit_info, get_commit_modified_files
 
 
 class TestRunGitCommand:
-    @patch('git.commands.subprocess.run')
+    @patch('git_utils.commands.subprocess.run')
     def test_success(self, mock_run):
         mock_run.return_value = MagicMock(stdout="output text", stderr="")
         success, output = run_git_command(["git", "status"])
         assert success is True
         assert output == "output text"
 
-    @patch('git.commands.subprocess.run')
+    @patch('git_utils.commands.subprocess.run')
     def test_failure(self, mock_run):
         mock_run.side_effect = subprocess.CalledProcessError(1, "git", stderr="error msg")
         success, output = run_git_command(["git", "bad-command"])
@@ -24,13 +24,13 @@ class TestRunGitCommand:
 
 
 class TestGetCommitsInRange:
-    @patch('git.commands.run_git_command')
+    @patch('git_utils.commands.run_git_command')
     def test_returns_split_lines(self, mock_git):
         mock_git.return_value = (True, "abc123 First commit\ndef456 Second commit\n")
         result = get_commits_in_range("main")
         assert result == ["abc123 First commit", "def456 Second commit"]
 
-    @patch('git.commands.run_git_command')
+    @patch('git_utils.commands.run_git_command')
     def test_failure_exits(self, mock_git):
         mock_git.return_value = (False, "error")
         import pytest
@@ -39,7 +39,7 @@ class TestGetCommitsInRange:
 
 
 class TestGetCommitInfo:
-    @patch('git.commands.run_git_command')
+    @patch('git_utils.commands.run_git_command')
     def test_builds_commit_info(self, mock_git):
         mock_git.side_effect = [
             (True, "This is the body\n\nSigned-off-by: Dev"),
@@ -53,13 +53,13 @@ class TestGetCommitInfo:
 
 
 class TestGetCommitModifiedFiles:
-    @patch('git.commands.run_git_command')
+    @patch('git_utils.commands.run_git_command')
     def test_parses_numstat(self, mock_git):
         mock_git.return_value = (True, "\n1\t2\tfile1.py\n3\t4\tfile2.txt\n")
         result = get_commit_modified_files("abc123")
         assert result == ["file1.py", "file2.txt"]
 
-    @patch('git.commands.run_git_command')
+    @patch('git_utils.commands.run_git_command')
     def test_failure_exits(self, mock_git):
         mock_git.return_value = (False, "error")
         import pytest
