@@ -17,6 +17,7 @@ from config import (
 from validators.merge_request import (
     validate_mr_title,
     validate_mr_description,
+    validate_mr_description_email,
     validate_no_protected_type_closure,
 )
 
@@ -112,6 +113,47 @@ class TestMergeRequestValidation:
         result = validate_mr_description(mr_info)
         assert result.success is False
         assert "does not contain a Signed-off-by" in result.error_message
+
+
+class TestMREmailValidation:
+    def test_validate_mr_description_email_invalid(self):
+        """Test that MR descriptions with invalid SOB emails fail validation."""
+        mr_info = MergeRequestInfo(
+            iid="123",
+            title="RHELAI-1234: Feature implementation",
+            description="Description.\n\nSigned-off-by: Dev <user@host01.subdomain.example.redhat.com>",
+            author="developer",
+        )
+        result = validate_mr_description_email(mr_info)
+        assert result.success is False
+        assert "not in the allowed list" in result.error_message
+
+    @pytest.mark.parametrize("enabled,should_pass", [
+        (True, False),
+        (False, True),
+    ])
+    def test_validate_mr_description_email_kill_switch(self, enabled, should_pass):
+        """Test EMAIL_VALIDATION_ENABLED controls MR description email validation."""
+        mr_info = MergeRequestInfo(
+            iid="123",
+            title="RHELAI-1234: Feature implementation",
+            description="Description.\n\nSigned-off-by: Dev <user@host01.subdomain.example.redhat.com>",
+            author="developer",
+        )
+        with patch('validators.merge_request.EMAIL_VALIDATION_ENABLED', enabled):
+            result = validate_mr_description_email(mr_info)
+        assert result.success is should_pass
+
+    def test_validate_mr_description_email_valid(self):
+        """Test that MR descriptions with valid SOB emails pass validation."""
+        mr_info = MergeRequestInfo(
+            iid="123",
+            title="RHELAI-1234: Feature implementation",
+            description="Description.\n\nSigned-off-by: Dev <dev@redhat.com>",
+            author="developer",
+        )
+        result = validate_mr_description_email(mr_info)
+        assert result.success is True
 
 
 class TestIntegrationMR:
