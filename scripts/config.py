@@ -51,6 +51,23 @@ LINTERIGNORE_PATHS = [
 JIRA_PATTERN = re.compile(r"(([A-Z]{2,})-(\d+))", flags=re.MULTILINE)
 JIRA_INTERNAL_PATTERN = re.compile(r"INTERNAL", flags=re.MULTILINE)
 SIGNED_OFF_BY_PATTERN = re.compile(r"Signed-off-by: ", flags=re.MULTILINE)
+
+# Allowed email domains for commit author and Signed-off-by validation.
+# Exact match only — subdomains are NOT included (e.g., "redhat.com" allows
+# user@redhat.com but rejects user@machine.internal.redhat.com).
+ALLOWED_EMAIL_DOMAINS = {"redhat.com"}
+
+# Kill switch for email domain validation.
+# Set to False to disable all email checks without removing code.
+EMAIL_VALIDATION_ENABLED = True
+
+# Extracts the email address from Signed-off-by lines.
+# Line-anchored and case-insensitive to handle variations like "signed-off-by:".
+SOB_EMAIL_PATTERN = re.compile(
+    r"^Signed-off-by:\s+[^<]*<([^>]+)>",
+    flags=re.MULTILINE | re.IGNORECASE,
+)
+
 # Revert pattern: matches GitLab auto-generated revert titles
 REVERT_PATTERN = re.compile(r'^Revert "(.+)"$')
 # Pattern matching GitLab's default issue-closing keywords followed by Jira issue IDs.
@@ -102,6 +119,7 @@ class CommitInfo:
     commit_id: str
     title: str
     body: str
+    author_email: str = ""
 
 
 @dataclass

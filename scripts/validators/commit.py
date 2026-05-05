@@ -1,8 +1,11 @@
 """Commit validation functions for the AIPCC linter."""
 
-from typing import List
+from typing import List, Set
 
-from config import CommitInfo, POLICY_MESSAGE, ValidationResult
+from config import (
+    ALLOWED_EMAIL_DOMAINS, CommitInfo, EMAIL_VALIDATION_ENABLED,
+    POLICY_MESSAGE, SOB_EMAIL_PATTERN, ValidationResult,
+)
 from log import logger
 from git_utils.commands import get_commit_modified_files
 from git_utils.merge_detection import should_skip_commit_validation
@@ -72,6 +75,127 @@ def validate_internal_commit_files(commit: CommitInfo) -> ValidationResult:
     return ValidationResult.ok()
 
 
+# ============================================================================
+# EMAIL VALIDATION
+# ============================================================================
+
+def extract_sob_emails(text: str) -> List[str]:
+    """
+    Extract email addresses from Signed-off-by lines.
+
+    Parses lines matching `Signed-off-by: Name <email>` (case-insensitive)
+    and returns the email addresses in lowercase.
+
+    Args:
+        text: Text to search (commit body or MR description)
+
+    Returns:
+        List of email addresses (lowercase)
+    """
+    return [email.lower() for email in SOB_EMAIL_PATTERN.findall(text)]
+
+
+def is_valid_email_domain(email: str, allowed_domains: Set[str]) -> bool:
+    """
+    Check if an email's domain is in the allowed set.
+
+    Args:
+        email: Email address to validate
+        allowed_domains: Set of allowed domain strings (lowercase)
+
+    Returns:
+        True if the domain portion matches an allowed domain
+    """
+    if "@" not in email:
+        return False
+    domain = email.rsplit("@", 1)[1].lower()
+    if not domain:
+        return False
+    return domain in allowed_domains
+
+
+def format_email_error(context: str, email: str, reason: str) -> str:
+    """Build a standardised email-validation error message."""
+    domains_str = ", ".join(sorted(ALLOWED_EMAIL_DOMAINS))
+    return (
+        f"ERROR [{context}]: {reason}\n"
+        f"Email: {email}\n"
+        f"Allowed domains: {domains_str}\n"
+        f'Tip: Configure your git email with: \'git config user.email "name@redhat.com"\'\n'
+        f"{POLICY_MESSAGE}"
+    )
+
+
+def format_malformed_sob_error(context: str) -> str:
+    """Build an error message for SOB lines missing an angle-bracket email."""
+    return (
+        f"ERROR [{context}]: Signed-off-by tag found but no email address "
+        f"in <> brackets could be extracted.\n"
+        f"Signed-off-by must use the format: Signed-off-by: Name <email>\n"
+        f"Tip: Use 'git commit -s' to automatically add a properly formatted "
+        f"Signed-off-by line.\n"
+        f"{POLICY_MESSAGE}"
+    )
+
+
+def validate_commit_email(commit: CommitInfo) -> ValidationResult:
+    """
+    Validate that commit author and Signed-off-by emails use allowed domains.
+
+    Checks:
+    1. Commit author email (from git metadata) must use an allowed domain.
+    2. All Signed-off-by emails in the commit body must use allowed domains.
+    3. If Signed-off-by tags are present but no email could be parsed, the
+       tag is considered malformed.
+
+    Disabled when `EMAIL_VALIDATION_ENABLED` is `False`.
+
+    Args:
+        commit: Commit information
+
+    Returns:
+        ValidationResult
+    """
+    if not EMAIL_VALIDATION_ENABLED:
+        return ValidationResult.ok()
+
+    context = f"COMMIT {commit.commit_id}"
+
+    # Validate commit author email
+    if not commit.author_email:
+        return ValidationResult.fail(
+            format_email_error(context, "(empty)", "commit author email is empty")
+        )
+
+    if not is_valid_email_domain(commit.author_email, ALLOWED_EMAIL_DOMAINS):
+        return ValidationResult.fail(
+            format_email_error(
+                context,
+                commit.author_email,
+                "commit author email uses a domain not in the allowed list",
+            )
+        )
+
+    # Validate Signed-off-by emails
+    has_sob = contains_signed_off_by(commit.body)
+    sob_emails = extract_sob_emails(commit.body)
+
+    if has_sob and not sob_emails:
+        return ValidationResult.fail(format_malformed_sob_error(context))
+
+    for email in sob_emails:
+        if not is_valid_email_domain(email, ALLOWED_EMAIL_DOMAINS):
+            return ValidationResult.fail(
+                format_email_error(
+                    context,
+                    email,
+                    "Signed-off-by email uses a domain not in the allowed list",
+                )
+            )
+
+    return ValidationResult.ok()
+
+
 def validate_commit(commit: CommitInfo) -> List[str]:
     """
     Validate a single commit against all rules.
@@ -105,6 +229,10 @@ def validate_commit(commit: CommitInfo) -> List[str]:
             errors.append(result.error_message)
 
     result = validate_commit_signed_off_by(commit)
+    if not result.success:
+        errors.append(result.error_message)
+
+    result = validate_commit_email(commit)
     if not result.success:
         errors.append(result.error_message)
 

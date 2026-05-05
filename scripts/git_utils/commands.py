@@ -61,21 +61,25 @@ def get_commits_in_range(base_sha: str) -> List[str]:
 
 
 def get_commit_info(commit_id: str) -> CommitInfo:
-    """Get detailed information about a specific commit."""
-    success, body = run_git_command(["git", "log", "-1", commit_id, "--format=%b"])
+    """Get detailed information about a specific commit.
+
+    Fetches title, author email, and body in a single git command using
+    NUL byte separators to reliably split the output (the body can contain
+    arbitrary text including newlines).
+    """
+    success, output = run_git_command(
+        ["git", "log", "-1", commit_id, "--format=%s%x00%ae%x00%b"]
+    )
     if not success:
-        logger.error(f"Failed to get commit body for {commit_id}")
+        logger.error(f"Failed to get commit info for {commit_id}")
         sys.exit(1)
 
-    success, title = run_git_command(["git", "log", "-1", commit_id, "--format=%s"])
-    if not success:
-        logger.error(f"Failed to get commit title for {commit_id}")
-        sys.exit(1)
-
+    parts = output.split("\x00", 2)
     return CommitInfo(
         commit_id=commit_id,
-        title=title.strip(),
-        body=body
+        title=parts[0].strip(),
+        author_email=parts[1].strip() if len(parts) > 1 else "",
+        body=parts[2] if len(parts) > 2 else "",
     )
 
 

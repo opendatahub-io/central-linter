@@ -41,14 +41,15 @@ class TestGetCommitsInRange:
 class TestGetCommitInfo:
     @patch('git_utils.commands.run_git_command')
     def test_builds_commit_info(self, mock_git):
-        mock_git.side_effect = [
-            (True, "This is the body\n\nSigned-off-by: Dev"),
-            (True, "  RHELAI-1234: Fix bug  \n"),
-        ]
+        mock_git.return_value = (
+            True,
+            "RHELAI-1234: Fix bug\x00dev@redhat.com\x00This is the body\n\nSigned-off-by: Dev\n",
+        )
         result = get_commit_info("abc123")
         assert isinstance(result, CommitInfo)
         assert result.commit_id == "abc123"
         assert result.title == "RHELAI-1234: Fix bug"
+        assert result.author_email == "dev@redhat.com"
         assert "Signed-off-by" in result.body
 
 

@@ -112,7 +112,7 @@ class TestValidateMergeRequest:
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'RHELAI-1234: Feature implementation',
         'CI_MERGE_REQUEST_IID': '123',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev <dev@redhat.com>',
     })
     def test_valid_mr(self):
         errors = validate_merge_request()
