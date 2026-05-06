@@ -17,7 +17,6 @@ from config import (
 from validators.merge_request import (
     validate_mr_title,
     validate_mr_description,
-    validate_mr_description_email,
     validate_no_protected_type_closure,
 )
 
@@ -30,7 +29,7 @@ class TestMergeRequestValidation:
     def test_validate_mr_title_with_jira(self):
         mr_info = MergeRequestInfo(
             iid="123", title="RHELAI-1234: Feature implementation",
-            description="Description\n\nSigned-off-by: Dev", author="developer"
+            description="Description", author="developer"
         )
         result = validate_mr_title(mr_info)
         assert result.success is True
@@ -38,7 +37,7 @@ class TestMergeRequestValidation:
     def test_validate_mr_title_with_internal(self):
         mr_info = MergeRequestInfo(
             iid="123", title="INTERNAL: Documentation update",
-            description="Description\n\nSigned-off-by: Dev", author="developer"
+            description="Description", author="developer"
         )
         result = validate_mr_title(mr_info)
         assert result.success is True
@@ -46,7 +45,7 @@ class TestMergeRequestValidation:
     def test_validate_mr_title_invalid(self):
         mr_info = MergeRequestInfo(
             iid="123", title="Feature implementation",
-            description="Description\n\nSigned-off-by: Dev", author="developer"
+            description="Description", author="developer"
         )
         result = validate_mr_title(mr_info)
         assert result.success is False
@@ -55,7 +54,7 @@ class TestMergeRequestValidation:
     def test_validate_mr_title_invalid_no_colon(self):
         mr_info = MergeRequestInfo(
             iid="123", title="RHELAI-1234 Feature implementation",
-            description="Description\n\nSigned-off-by: Dev", author="developer"
+            description="Description", author="developer"
         )
         result = validate_mr_title(mr_info)
         assert result.success is False
@@ -64,7 +63,7 @@ class TestMergeRequestValidation:
     def test_validate_mr_title_invalid_short_description(self):
         mr_info = MergeRequestInfo(
             iid="123", title="RHELAI-1234: Fix",
-            description="Description\n\nSigned-off-by: Dev", author="developer"
+            description="Description", author="developer"
         )
         result = validate_mr_title(mr_info)
         assert result.success is False
@@ -73,7 +72,7 @@ class TestMergeRequestValidation:
     def test_validate_mr_title_revert_with_valid_inner_title(self):
         mr_info = MergeRequestInfo(
             iid="123", title='Revert "AIPCC-1234: Fix authentication bug"',
-            description="Description\n\nSigned-off-by: Dev", author="developer"
+            description="Description", author="developer"
         )
         result = validate_mr_title(mr_info)
         assert result.success is True
@@ -81,7 +80,7 @@ class TestMergeRequestValidation:
     def test_validate_mr_title_revert_with_invalid_inner_title(self):
         mr_info = MergeRequestInfo(
             iid="123", title='Revert "Fix authentication bug"',
-            description="Description\n\nSigned-off-by: Dev", author="developer"
+            description="Description", author="developer"
         )
         result = validate_mr_title(mr_info)
         assert result.success is False
@@ -90,7 +89,17 @@ class TestMergeRequestValidation:
     def test_validate_mr_description_valid(self):
         mr_info = MergeRequestInfo(
             iid="123", title="RHELAI-1234: Fix",
-            description="This is a description\n\nSigned-off-by: John Doe <john@example.com>",
+            description="This is a description",
+            author="developer"
+        )
+        result = validate_mr_description(mr_info)
+        assert result.success is True
+
+    def test_validate_mr_description_valid_without_sob(self):
+        """Signed-off-by is not required in MR descriptions (checked per-commit instead)."""
+        mr_info = MergeRequestInfo(
+            iid="123", title="RHELAI-1234: Fix",
+            description="This is a long description with no sign-off line.",
             author="developer"
         )
         result = validate_mr_description(mr_info)
@@ -105,63 +114,30 @@ class TestMergeRequestValidation:
         assert result.success is False
         assert "description cannot be empty" in result.error_message
 
-    def test_validate_mr_description_missing_signed_off_by(self):
+    def test_validate_mr_description_empty_string(self):
         mr_info = MergeRequestInfo(
             iid="123", title="RHELAI-1234: Fix",
-            description="This is a description", author="developer"
+            description="", author="developer"
         )
         result = validate_mr_description(mr_info)
         assert result.success is False
-        assert "does not contain a Signed-off-by" in result.error_message
+        assert "description cannot be empty" in result.error_message
 
-
-class TestMREmailValidation:
-    def test_validate_mr_description_email_invalid(self):
-        """Test that MR descriptions with invalid SOB emails fail validation."""
+    def test_validate_mr_description_whitespace_only(self):
         mr_info = MergeRequestInfo(
-            iid="123",
-            title="RHELAI-1234: Feature implementation",
-            description="Description.\n\nSigned-off-by: Dev <user@host01.subdomain.example.redhat.com>",
-            author="developer",
+            iid="123", title="RHELAI-1234: Fix",
+            description="   \n  ", author="developer"
         )
-        result = validate_mr_description_email(mr_info)
+        result = validate_mr_description(mr_info)
         assert result.success is False
-        assert "not in the allowed list" in result.error_message
-
-    @pytest.mark.parametrize("enabled,should_pass", [
-        (True, False),
-        (False, True),
-    ])
-    def test_validate_mr_description_email_kill_switch(self, enabled, should_pass):
-        """Test EMAIL_VALIDATION_ENABLED controls MR description email validation."""
-        mr_info = MergeRequestInfo(
-            iid="123",
-            title="RHELAI-1234: Feature implementation",
-            description="Description.\n\nSigned-off-by: Dev <user@host01.subdomain.example.redhat.com>",
-            author="developer",
-        )
-        with patch('validators.merge_request.EMAIL_VALIDATION_ENABLED', enabled):
-            result = validate_mr_description_email(mr_info)
-        assert result.success is should_pass
-
-    def test_validate_mr_description_email_valid(self):
-        """Test that MR descriptions with valid SOB emails pass validation."""
-        mr_info = MergeRequestInfo(
-            iid="123",
-            title="RHELAI-1234: Feature implementation",
-            description="Description.\n\nSigned-off-by: Dev <dev@redhat.com>",
-            author="developer",
-        )
-        result = validate_mr_description_email(mr_info)
-        assert result.success is True
+        assert "description cannot be empty" in result.error_message
 
 
 class TestIntegrationMR:
     def test_full_mr_validation_success(self):
         mr_info = MergeRequestInfo(
             iid="123", title="RHELAI-1234: Feature implementation",
-            description="This MR implements feature X.\n\n"
-                       "Signed-off-by: John Doe <john@example.com>",
+            description="This MR implements feature X.",
             author="developer"
         )
         assert validate_mr_title(mr_info).success is True
@@ -342,7 +318,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_mr_commits_from_api')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-100',
     })
     def test_epic_in_mr_description(self, mock_commits, mock_get):
         mock_commits.return_value = []
@@ -359,7 +335,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_mr_commits_from_api')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'Closes AIPCC-100',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description',
     })
     def test_epic_in_mr_title(self, mock_commits, mock_get):
         mock_commits.return_value = []
@@ -375,7 +351,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_commit_info')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description',
     })
     def test_epic_in_commit_message(self, mock_info, mock_commits, mock_get):
         mock_commits.return_value = ['abc123']
@@ -396,7 +372,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_mr_commits_from_api')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'AIPCC-100: Fix the bug',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Related to AIPCC-100\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Related to AIPCC-100',
     })
     def test_bare_epic_id_passes(self, mock_commits, mock_get):
         mock_commits.return_value = []
@@ -410,7 +386,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_mr_commits_from_api')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-200\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes AIPCC-200',
     })
     def test_non_epic_with_closing_keyword_passes(self, mock_commits, mock_get):
         mock_commits.return_value = []
@@ -424,7 +400,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_mr_commits_from_api')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Closes AIPCC-200, AIPCC-100\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Closes AIPCC-200, AIPCC-100',
     })
     def test_mixed_epic_and_non_epic(self, mock_commits, mock_get):
         mock_commits.return_value = []
@@ -441,7 +417,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_mr_commits_from_api')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes RHELAI-500\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes RHELAI-500',
     })
     def test_non_aipcc_ticket_skipped(self, mock_commits, mock_get):
         mock_commits.return_value = []
@@ -558,7 +534,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_mr_commits_from_api')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'AIPCC-999: Add feature',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes: AIPCC-100\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Fixes: AIPCC-100',
     })
     def test_colon_variant_detects_epic(self, mock_commits, mock_get):
         mock_commits.return_value = []
@@ -620,7 +596,7 @@ class TestValidateNoProtectedTypeClosure:
     @patch('validators.merge_request.get_commit_info')
     @patch.dict('os.environ', {
         'CI_MERGE_REQUEST_TITLE': 'INTERNAL: Update docs',
-        'CI_MERGE_REQUEST_DESCRIPTION': 'Description\n\nSigned-off-by: Dev',
+        'CI_MERGE_REQUEST_DESCRIPTION': 'Description',
     })
     def test_internal_commit_still_checked(self, mock_info, mock_commits, mock_get):
         mock_commits.return_value = ['abc123']

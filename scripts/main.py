@@ -9,7 +9,7 @@ from log import error, logger
 from git_utils.commands import configure_git_safe_directory, get_commit_info, get_commits_in_range, run_git_command
 from gitlab.api import get_mr_author, get_mr_commits_from_api
 from validators.commit import validate_commit
-from validators.merge_request import validate_mr_title, validate_mr_description, validate_mr_description_email, validate_no_protected_type_closure
+from validators.merge_request import validate_mr_title, validate_mr_description, validate_no_protected_type_closure
 
 
 def check_bot_exemption() -> bool:
@@ -124,10 +124,6 @@ def validate_merge_request() -> List[str]:
         errors.append(result.error_message)
 
     result = validate_mr_description(mr_info)
-    if not result.success:
-        errors.append(result.error_message)
-
-    result = validate_mr_description_email(mr_info)
     if not result.success:
         errors.append(result.error_message)
 

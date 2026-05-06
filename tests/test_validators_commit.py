@@ -135,6 +135,36 @@ class TestValidateCommit:
         assert len(errors) > 0
         mock_should_skip.assert_called_once_with(commit)
 
+    @patch('validators.files.get_commit_modified_files')
+    @patch('validators.commit.should_skip_commit_validation')
+    def test_revert_commit_skips_sob_check(self, mock_should_skip, mock_get_files):
+        """UI-generated revert commits have no Signed-off-by; they must not be rejected for it."""
+        mock_should_skip.return_value = False
+        mock_get_files.return_value = []
+        commit = CommitInfo(
+            commit_id="abc123",
+            title='Revert "AIPCC-1234: Fix authentication bug"',
+            body="This reverts commit deadbeef.",
+            author_email="dev@redhat.com",
+        )
+        errors = validate_commit(commit)
+        assert not any("Signed-off-by" in e for e in errors)
+
+    @patch('validators.files.get_commit_modified_files')
+    @patch('validators.commit.should_skip_commit_validation')
+    def test_non_revert_commit_still_requires_sob(self, mock_should_skip, mock_get_files):
+        """Regular commits without Signed-off-by must still fail."""
+        mock_should_skip.return_value = False
+        mock_get_files.return_value = []
+        commit = CommitInfo(
+            commit_id="abc123",
+            title="AIPCC-1234: Fix authentication bug",
+            body="This fixes the bug.",
+            author_email="dev@redhat.com",
+        )
+        errors = validate_commit(commit)
+        assert any("Signed-off-by" in e for e in errors)
+
 
 class TestEmailValidation:
     """Tests for email domain validation in commits."""
