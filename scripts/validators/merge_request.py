@@ -4,8 +4,7 @@ import os
 from typing import Dict, List
 
 from config import (
-    ALLOWED_EMAIL_DOMAINS, CLOSING_PHRASE_PATTERN, EMAIL_VALIDATION_ENABLED,
-    ISSUE_TYPE_CHECK_PROJECT_KEYS, JIRA_ID_EXTRACT_PATTERN,
+    CLOSING_PHRASE_PATTERN, ISSUE_TYPE_CHECK_PROJECT_KEYS, JIRA_ID_EXTRACT_PATTERN,
     MergeRequestInfo, GitLabConfig, JiraConfig, POLICY_MESSAGE,
     PROTECTED_ISSUE_TYPES, SKIP_ISSUE_TYPE_CHECK_LABEL, ValidationResult,
 )
@@ -13,11 +12,7 @@ from log import logger
 from git_utils.commands import get_commit_info, get_commits_in_range
 from gitlab.api import get_mr_commits_from_api
 from jira.api import get_jira_issue_type
-from validators.commit import (
-    format_email_error, format_malformed_sob_error,
-    extract_sob_emails, is_valid_email_domain,
-)
-from validators.title import contains_signed_off_by, validate_title_format
+from validators.title import validate_title_format
 
 
 def validate_mr_title(mr_info: MergeRequestInfo) -> ValidationResult:
@@ -40,7 +35,13 @@ def validate_mr_title(mr_info: MergeRequestInfo) -> ValidationResult:
 
 def validate_mr_description(mr_info: MergeRequestInfo) -> ValidationResult:
     """
-    Validate MR description exists and has Signed-off-by tag.
+    Validate MR description is not empty.
+
+    Signed-off-by is intentionally not checked here:
+    - The MR UI already shows who opened the request.
+    - Individual commits carry their own Signed-off-by tags (checked separately).
+    - CI_MERGE_REQUEST_DESCRIPTION is capped at ~2700 characters by GitLab,
+      which can silently truncate long descriptions and cause false failures.
 
     Args:
         mr_info: Merge request information
@@ -48,58 +49,10 @@ def validate_mr_description(mr_info: MergeRequestInfo) -> ValidationResult:
     Returns:
         ValidationResult
     """
-    if mr_info.description is None:
+    if not mr_info.description or not mr_info.description.strip():
         return ValidationResult.fail(
             f"ERROR [MERGE REQUEST {mr_info.iid}]: description cannot be empty.\n{POLICY_MESSAGE}"
         )
-
-    if not contains_signed_off_by(mr_info.description):
-        return ValidationResult.fail(
-            f"ERROR [MERGE REQUEST {mr_info.iid}]: description does not contain a "
-            f"Signed-off-by: tag.\n{POLICY_MESSAGE}"
-        )
-
-    return ValidationResult.ok()
-
-
-def validate_mr_description_email(mr_info: MergeRequestInfo) -> ValidationResult:
-    """
-    Validate that Signed-off-by emails in the MR description use allowed domains.
-
-    If no Signed-off-by tag is present or the description is empty, returns
-    OK without error (SOB presence is enforced separately by
-    `validate_mr_description`).
-
-    Disabled when `EMAIL_VALIDATION_ENABLED` is `False`.
-
-    Args:
-        mr_info: Merge request information
-
-    Returns:
-        ValidationResult
-    """
-    if not EMAIL_VALIDATION_ENABLED:
-        return ValidationResult.ok()
-
-    if mr_info.description is None:
-        return ValidationResult.ok()
-
-    context = f"MERGE REQUEST {mr_info.iid}"
-    has_sob = contains_signed_off_by(mr_info.description)
-    sob_emails = extract_sob_emails(mr_info.description)
-
-    if has_sob and not sob_emails:
-        return ValidationResult.fail(format_malformed_sob_error(context))
-
-    for email in sob_emails:
-        if not is_valid_email_domain(email, ALLOWED_EMAIL_DOMAINS):
-            return ValidationResult.fail(
-                format_email_error(
-                    context,
-                    email,
-                    "Signed-off-by email uses a domain not in the allowed list",
-                )
-            )
 
     return ValidationResult.ok()
 

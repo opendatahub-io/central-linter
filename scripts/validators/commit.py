@@ -4,7 +4,7 @@ from typing import List, Set
 
 from config import (
     ALLOWED_EMAIL_DOMAINS, CommitInfo, EMAIL_VALIDATION_ENABLED,
-    POLICY_MESSAGE, SOB_EMAIL_PATTERN, ValidationResult,
+    POLICY_MESSAGE, REVERT_PATTERN, SOB_EMAIL_PATTERN, ValidationResult,
 )
 from log import logger
 from git_utils.commands import get_commit_modified_files
@@ -228,9 +228,11 @@ def validate_commit(commit: CommitInfo) -> List[str]:
         if not result.success:
             errors.append(result.error_message)
 
-    result = validate_commit_signed_off_by(commit)
-    if not result.success:
-        errors.append(result.error_message)
+    # UI-generated revert commits don't include a Signed-off-by line; exempt them.
+    if not REVERT_PATTERN.match(commit.title):
+        result = validate_commit_signed_off_by(commit)
+        if not result.success:
+            errors.append(result.error_message)
 
     result = validate_commit_email(commit)
     if not result.success:
