@@ -3,12 +3,10 @@ include:
     inputs:
       IMAGE: ${BUILD_IMAGE}
   # AI Code Review
-  - project: 'redhat/rhel-ai/core/tools/ai-review'
-    file: 'ai-review.gitlab-ci.yml'
+  - project: 'redhat/rhel-ai/agentic-ci/code-review'
+    file: 'ci/code-review.gitlab-ci.yml'
     inputs:
       INSTRUCTIONS: "Use the repo-reviewer skill for specialized central-linter code review. Focus on Containerfile correctness, linter config changes, MR/commit linter logic, and CI template compatibility."
-    rules:
-      - if: '$CI_MERGE_REQUEST_LABELS =~ /ai-review/'
 
 variables:
   IMAGE_NAME: "quay.io/aipcc-cicd/central-linter"
