@@ -33,14 +33,14 @@ default:
 build:
   extends: .default_rules
   stage: build
-  image: quay.io/podman/stable:latest
+  image: quay.io/buildah/stable:v1.43.1@sha256:ca4edbaabf71ca330ec9b2714bf8e06c726a6e85ae215cfb1474d2e2c832aacb
   tags:
-    - aipcc-small-x86_64
+    - aipcc-k8s-build
   before_script:
-    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY" <<< "$CI_REGISTRY_PASSWORD"
   script:
-    - podman build --format docker --tag ${BUILD_IMAGE} --file ${CONTAINERFILE_PATH} ${CONTEXT_DIR}
-    - podman push ${BUILD_IMAGE}
+    - buildah bud --format docker --tag ${BUILD_IMAGE} --file ${CONTAINERFILE_PATH} ${CONTEXT_DIR}
+    - buildah push ${BUILD_IMAGE}
 
 linter-central:
   extends: .default_rules
@@ -64,9 +64,9 @@ test:
 
 push:
   stage: push
-  image: quay.io/podman/stable:latest
+  image: quay.io/buildah/stable:v1.43.1@sha256:ca4edbaabf71ca330ec9b2714bf8e06c726a6e85ae215cfb1474d2e2c832aacb
   tags:
-    - aipcc-small-x86_64
+    - aipcc-k8s-build
   needs: ["build", "test"]
   before_script:
     - |
@@ -77,15 +77,15 @@ push:
       QUAY_USERNAME=$("${VAULT_BIN}" kv get -field=username apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
       QUAY_PASSWORD=$("${VAULT_BIN}" kv get -field=password apps/ai-aipcc-cicd/quay/aipcc-cicd/central_linter_gitlab)
 
-      echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-      echo "$QUAY_PASSWORD" | podman login -u "$QUAY_USERNAME" --password-stdin quay.io
+      buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY" <<< "$CI_REGISTRY_PASSWORD"
+      buildah login -u "$QUAY_USERNAME" --password-stdin quay.io <<< "$QUAY_PASSWORD"
   script:
-    - podman pull ${BUILD_IMAGE}
+    - buildah pull ${BUILD_IMAGE}
     - |
       push_tag() {
         local tag=$1
-        podman tag ${BUILD_IMAGE} ${IMAGE_NAME}:${tag}
-        podman push ${IMAGE_NAME}:${tag}
+        buildah tag ${BUILD_IMAGE} ${IMAGE_NAME}:${tag}
+        buildah push ${IMAGE_NAME}:${tag}
       }
 
       push_tag ${CI_COMMIT_SHORT_SHA}
