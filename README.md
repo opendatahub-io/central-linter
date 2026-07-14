@@ -919,10 +919,10 @@ ERROR: Closing keyword found with Epic ticket AIPCC-123 (in MR description).
 ```
 Fix: Use `Related to AIPCC-123` or `Ref AIPCC-123` instead of closing keywords, or add the `skip-issue-type-check` label to the MR
 
-For more details, see [AIPCC Commit and Merge Request Guidelines](https://docs.google.com/document/d/1TAicyqGKKELzaYL4o-Plz2s7tFUhOctZFzHErMQSc8c).
+For more details, see [POLICY.md](./POLICY.md).
 
 ## Troubleshooting
 
 ## License
 
-Internal CI/CD tooling for Red Hat AIPCC projects.
+Licensed under the [Apache License, Version 2.0](./LICENSE).
