@@ -1,5 +1,10 @@
 # Central Linter
 
+> **This repository has moved to GitHub.**
+> The canonical source is now [opendatahub-io/central-linter](https://github.com/opendatahub-io/central-linter).
+> This GitLab repository is a read-only mirror.
+> CI/CD runs on GitHub Actions; the container image is still published to `quay.io/aipcc-cicd/central-linter`.
+
 A centralized linter container image for AIPCC CI/CD workflows, providing consistent linting across all projects.
 
 ## Features
