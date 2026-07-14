@@ -1,5 +1,10 @@
 # Central Linter
 
+> **This repository has moved to GitHub.**
+> The canonical source is now [opendatahub-io/central-linter](https://github.com/opendatahub-io/central-linter).
+> This GitLab repository is a read-only mirror.
+> CI/CD runs on GitHub Actions; the container image is still published to `quay.io/aipcc-cicd/central-linter`.
+
 A centralized linter container image for AIPCC CI/CD workflows, providing consistent linting across all projects.
 
 ## Features
@@ -914,10 +919,10 @@ ERROR: Closing keyword found with Epic ticket AIPCC-123 (in MR description).
 ```
 Fix: Use `Related to AIPCC-123` or `Ref AIPCC-123` instead of closing keywords, or add the `skip-issue-type-check` label to the MR
 
-For more details, see [AIPCC Commit and Merge Request Guidelines](https://docs.google.com/document/d/1TAicyqGKKELzaYL4o-Plz2s7tFUhOctZFzHErMQSc8c).
+For more details, see [POLICY.md](./POLICY.md).
 
 ## Troubleshooting
 
 ## License
 
-Internal CI/CD tooling for Red Hat AIPCC projects.
+Licensed under the [Apache License, Version 2.0](./LICENSE).
