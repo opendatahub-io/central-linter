@@ -1,0 +1,49 @@
+# Protected-paths guard -- COMMENT stage (privileged).
+#
+# Deterministic, no-AI supply-chain visibility layer (AIPCC-18022).
+#
+# SECURITY MODEL: triggered via `workflow_run` when the DETECT stage completes.
+# This runs in the BASE-repo context, so it HAS a write token and secrets --
+# but it only ever consumes the *sanitized* JSON artifact produced by detect
+# (PR number, head sha, matched paths). It never checks out or executes any
+# PR-provided code. This separation is what makes fork PRs safe: privileged
+# credentials are structurally isolated from anything a fork could influence.
+#
+# This stage posts an informational comment only. It does NOT set a failing
+# status -- CODEOWNERS + branch protection remain the enforcement gate.
+
+name: Protected Paths (comment)
+
+on:
+  workflow_run:
+    workflows: ["Protected Paths (detect)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Only act on PR-triggered detect runs that actually produced an artifact.
+    if: github.event.workflow_run.event == 'pull_request'
+    steps:
+      # Check out the base repo to get the (trusted) comment script.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download sanitized result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: protected-paths-result
+          path: ${{ runner.temp }}/result
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Post / update guard comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RESULT_FILE: ${{ runner.temp }}/result/protected-paths-result.json
+        run: .github/scripts/protected-paths-comment.sh

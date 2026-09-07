@@ -1,0 +1,53 @@
+# Protected-paths guard -- DETECT stage (unprivileged).
+#
+# Deterministic, no-AI supply-chain visibility layer (AIPCC-18022).
+#
+# SECURITY MODEL: this workflow runs on `pull_request`, so for fork PRs it gets
+# a READ-ONLY token and NO access to base-repo secrets. It never checks out or
+# executes PR-provided code -- it only:
+#   1. checks out the BASE repo's protected-paths config (trusted), and
+#   2. reads the PR's changed file *paths* via the GitHub API.
+# It emits a sanitized JSON artifact consumed by the privileged COMMENT stage
+# (protected-paths-comment.yml, triggered via workflow_run). This is Adrian's
+# recommended isolation pattern: privileged actions never share a context with
+# anything a fork could influence.
+#
+# Because the privileged stage is a separate workflow_run, adding a malicious
+# `make`/`npm` step here in the future still cannot leak secrets or write to
+# the repo -- this stage has neither.
+
+name: Protected Paths (detect)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Check out ONLY the base repo (default ref) to get the trusted config.
+      # We do NOT check out the PR head, so no PR-controlled files land here.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Detect protected-path changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CONFIG_FILE: .github/protected-paths.yml
+          OUTPUT_FILE: ${{ runner.temp }}/protected-paths-result.json
+        run: .github/scripts/protected-paths-detect.sh
+
+      - name: Upload sanitized result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: protected-paths-result
+          path: ${{ runner.temp }}/protected-paths-result.json
+          retention-days: 1
