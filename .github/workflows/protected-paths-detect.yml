@@ -42,9 +42,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # Check out ONLY the base repo (default ref) to get the trusted config.
-      # We do NOT check out the PR head, so no PR-controlled files land here.
+      # Check out the trusted BASE commit to get the config.
+      # On a pull_request event, actions/checkout defaults to the PR *merge* ref
+      # (refs/pull/N/merge), which includes PR-controlled files. A fork PR could
+      # then edit .github/protected-paths.yml to drop a protected pattern and the
+      # detector would read attacker-controlled config, reporting a false clean.
+      # Pin to base.sha so the config is always the trusted base-repo version.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
 
       # Fetch central-linter scripts from the specified ref into a subdirectory.
       # This allows the reusable workflow to run in any consumer repo while
