@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: read        # required: reusable comment workflow downloads the detect artifact via run-id
   pull-requests: write
 
 jobs:

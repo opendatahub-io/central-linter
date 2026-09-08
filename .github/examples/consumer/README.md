@@ -89,11 +89,22 @@ with:
 ### Comment Stage
 
 ```yaml
-uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@v1
-with:
-  run-id: ${{ github.event.workflow_run.id }}
-secrets: inherit
+permissions:
+  contents: read
+  actions: read        # required to download the detect run's artifact via run-id
+  pull-requests: write
+jobs:
+  comment:
+    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@v1
+    with:
+      run-id: ${{ github.event.workflow_run.id }}
+    secrets: inherit
 ```
+
+> **`actions: read` is required.** The comment stage downloads the detect run's artifact from a
+> different run (via `run-id`), which is an Actions API read. If your repo/org sets the default
+> `GITHUB_TOKEN` permissions to restricted, omitting this scope makes the download fail and the
+> comment is never posted.
 
 **Inputs:**
 - `run-id` (required) — The `workflow_run` id containing the sanitized artifact
@@ -154,3 +165,9 @@ The comment stage will be skipped if:
 If you see "authentication failed" errors:
 - Ensure `secrets: inherit` is present in the comment caller
 - Verify that the repo's GitHub Actions settings allow workflows to write to pull requests
+
+### Comment step fails on artifact download / comment not posted despite a match
+
+Ensure the comment caller grants `actions: read` in its `permissions:` block. The download of the
+detect run's artifact (via `run-id`) needs it. Repos with permissive default token permissions may
+work without it, but restricted-default repos will deny the download.

@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: read
+  actions: read        # required: download-artifact reads the detect run's artifact via run-id
   pull-requests: write
 
 jobs:
