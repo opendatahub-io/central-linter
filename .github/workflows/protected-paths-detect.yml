@@ -1,0 +1,81 @@
+# Protected-paths guard -- DETECT stage (unprivileged, reusable).
+#
+# Deterministic, no-AI supply-chain visibility layer (AIPCC-18022).
+#
+# REUSABLE WORKFLOW (workflow_call only): This can be called from consumer repos.
+# When called, it MUST obtain central-linter's scripts from the specified ref
+# and use the consumer's config file.
+#
+# SECURITY MODEL: runs unprivileged (READ-ONLY token, no base-repo secrets).
+# It never checks out or executes PR-provided code -- it only:
+#   1. checks out the BASE repo's protected-paths config (trusted), and
+#   2. reads the PR's changed file *paths* via the GitHub API.
+# It emits a sanitized JSON artifact consumed by the privileged COMMENT stage
+# (protected-paths-comment.yml, triggered via workflow_run). This is Adrian's
+# recommended isolation pattern: privileged actions never share a context with
+# anything a fork could influence.
+#
+# Because the privileged stage is a separate workflow_run, adding a malicious
+# `make`/`npm` step here in the future still cannot leak secrets or write to
+# the repo -- this stage has neither.
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: >-
+          Path to the protected-paths config file in the consumer repo
+          (default: .github/protected-paths.yml)
+        type: string
+        default: ".github/protected-paths.yml"
+      central-ref:
+        description: "Git ref of central-linter to fetch scripts from (default: v1)"
+        type: string
+        default: "v1"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Check out the trusted BASE commit to get the config.
+      # On a pull_request event, actions/checkout defaults to the PR *merge* ref
+      # (refs/pull/N/merge), which includes PR-controlled files. A fork PR could
+      # then edit .github/protected-paths.yml to drop a protected pattern and the
+      # detector would read attacker-controlled config, reporting a false clean.
+      # Pin to base.sha so the config is always the trusted base-repo version.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      # Fetch central-linter scripts from the specified ref into a subdirectory.
+      # This allows the reusable workflow to run in any consumer repo while
+      # obtaining the authoritative scripts from central-linter.
+      - name: Checkout central-linter scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: opendatahub-io/central-linter
+          ref: ${{ inputs.central-ref }}
+          path: _central-linter
+
+      - name: Detect protected-path changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CONFIG_FILE: ${{ inputs.config }}
+          OUTPUT_FILE: ${{ runner.temp }}/protected-paths-result.json
+          CENTRAL_LINTER_PATH: _central-linter
+        run: "${CENTRAL_LINTER_PATH}/.github/scripts/protected-paths-detect.sh"
+
+      - name: Upload sanitized result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: protected-paths-result
+          path: ${{ runner.temp }}/protected-paths-result.json
+          retention-days: 1

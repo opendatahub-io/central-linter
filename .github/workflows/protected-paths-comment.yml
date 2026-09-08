@@ -1,0 +1,68 @@
+# Protected-paths guard -- COMMENT stage (privileged, reusable).
+#
+# Deterministic, no-AI supply-chain visibility layer (AIPCC-18022).
+#
+# REUSABLE WORKFLOW (workflow_call only): This can be called from consumer repos.
+# When called, it MUST obtain central-linter's comment script from the specified ref.
+#
+# SECURITY MODEL: runs privileged (has base-repo context, write token, secrets).
+# It only ever consumes the *sanitized* JSON artifact produced by detect
+# (PR number, head sha, matched paths). It never checks out or executes any
+# PR-provided code. This separation is what makes fork PRs safe: privileged
+# credentials are structurally isolated from anything a fork could influence.
+#
+# This stage posts an informational comment only. It does NOT set a failing
+# status -- CODEOWNERS + branch protection remain the enforcement gate.
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: "The workflow_run id containing the sanitized artifact"
+        type: string
+        required: true
+      central-ref:
+        description: "Git ref of central-linter to fetch scripts from (default: v1)"
+        type: string
+        default: "v1"
+    secrets:
+      token:
+        description: "GitHub token for artifact download (optional; uses github.token if not provided)"
+        required: false
+
+permissions:
+  contents: read
+  actions: read        # required: download-artifact reads the detect run's artifact via run-id
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Check out the base repo to get the (trusted) comment script.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # Fetch central-linter comment script from the specified ref into a subdirectory.
+      - name: Checkout central-linter scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: opendatahub-io/central-linter
+          ref: ${{ inputs.central-ref }}
+          path: _central-linter
+
+      - name: Download sanitized result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: protected-paths-result
+          path: ${{ runner.temp }}/result
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ secrets.token || github.token }}
+
+      - name: Post / update guard comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RESULT_FILE: ${{ runner.temp }}/result/protected-paths-result.json
+          CENTRAL_LINTER_PATH: _central-linter
+        run: "${CENTRAL_LINTER_PATH}/.github/scripts/protected-paths-comment.sh"
