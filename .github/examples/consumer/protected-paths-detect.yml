@@ -1,0 +1,25 @@
+# Consumer example: Protected Paths (detect) caller
+#
+# Copy this file into your consumer repo at .github/workflows/protected-paths-detect.yml
+# Customize the `config` input to match your repo's protected-paths configuration location.
+#
+# This workflow:
+# 1. Runs on pull_request (unprivileged, fork-safe)
+# 2. Calls central-linter's reusable detect workflow
+# 3. Produces a sanitized artifact for the comment stage to consume
+
+name: Protected Paths (detect)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  detect:
+    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-detect.yml@v1
+    with:
+      config: .github/protected-paths.yml

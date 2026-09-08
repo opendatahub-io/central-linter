@@ -1,0 +1,30 @@
+# Consumer example: Protected Paths (comment) caller
+#
+# Copy this file into your consumer repo at .github/workflows/protected-paths-comment.yml
+#
+# This workflow:
+# 1. Runs on workflow_run (privileged, base-repo only)
+# 2. Calls central-linter's reusable comment workflow
+# 3. Posts/updates a guard comment on PRs that touch protected paths
+#
+# IMPORTANT: the `workflows` name MUST match the detect caller's `name:` field.
+# If you customize the detect caller name, update the workflows array below.
+
+name: Protected Paths (comment)
+
+on:
+  workflow_run:
+    workflows: ["Protected Paths (detect)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@v1
+    with:
+      run-id: ${{ github.event.workflow_run.id }}
+    secrets: inherit
