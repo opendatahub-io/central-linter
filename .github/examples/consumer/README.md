@@ -23,6 +23,10 @@ GitHub omits associated PR metadata for a fork run, it resolves the PR using the
 run's head repository, branch, and SHA. It never uses artifact-provided matches
 to construct a comment, and never executes PR-provided code.
 
+Central-linter's self-guard uses `pull_request_target` so GitHub loads the
+caller workflow from the trusted base branch. Its detector still only reads the
+base config and changed-path API; it does not check out or execute PR code.
+
 ## Installation
 
 ### 1. Add the two caller workflows

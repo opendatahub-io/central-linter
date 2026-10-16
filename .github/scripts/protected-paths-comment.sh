@@ -51,8 +51,8 @@ fi
 PR_NUMBER=$(jq -r '.pr_number' "$RESULT_FILE")
 ARTIFACT_HEAD_SHA=$(jq -r '.head_sha' "$RESULT_FILE")
 
-# Verify this is the expected successful pull_request run and that the artifact
-# identifies the same PR and commit as the event that requested the comment.
+# Verify this is the expected successful PR run and that the artifact identifies
+# the same PR and commit as the event that requested the comment.
 RUN_EVENT=$(jq -r '.workflow_run.event // empty' "$EVENT_FILE")
 RUN_CONCLUSION=$(jq -r '.workflow_run.conclusion // empty' "$EVENT_FILE")
 EVENT_RUN_ID=$(jq -r '.workflow_run.id // empty' "$EVENT_FILE")
@@ -64,17 +64,17 @@ RUN_BASE_SHAS=$(jq -r '[.workflow_run.pull_requests[]?.base.sha] | unique | .[]'
 RUN_HEAD_REPOSITORY=$(jq -r '.workflow_run.head_repository.full_name // empty' "$EVENT_FILE")
 RUN_HEAD_BRANCH=$(jq -r '.workflow_run.head_branch // empty' "$EVENT_FILE")
 
-# workflow_run.path is normally a path; accept a pull_request merge-ref suffix
-# when GitHub includes one, but never accept a suffix for another ref or PR.
+# workflow_run.path is normally a path; when GitHub includes a ref suffix,
+# validate it against the event type and PR/base branch below.
 RUN_WORKFLOW_PATH=${RUN_PATH%%@*}
 RUN_WORKFLOW_REF=""
 if [[ "$RUN_PATH" == *@* ]]; then
   RUN_WORKFLOW_REF=${RUN_PATH#*@}
 fi
 
-if [[ "$RUN_EVENT" != "pull_request" || "$RUN_CONCLUSION" != "success" || \
+if [[ ( "$RUN_EVENT" != "pull_request" && "$RUN_EVENT" != "pull_request_target" ) || \
+      "$RUN_CONCLUSION" != "success" || \
       "$EVENT_RUN_ID" != "$RUN_ID" || "$RUN_WORKFLOW_PATH" != "$EXPECTED_DETECT_WORKFLOW_PATH" || \
-      ( -n "$RUN_WORKFLOW_REF" && "$RUN_WORKFLOW_REF" != "refs/pull/${PR_NUMBER}/merge" ) || \
       "$RUN_REPOSITORY" != "$REPO" || \
       "$RUN_HEAD_SHA" != "$ARTIFACT_HEAD_SHA" ]]; then
   echo "Artifact provenance does not match the expected workflow run and PR; aborting."
@@ -98,12 +98,25 @@ PR_HEAD_SHA=$(jq -r '.head.sha' <<<"$PR_JSON")
 PR_HEAD_REPOSITORY=$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")
 PR_HEAD_BRANCH=$(jq -r '.head.ref' <<<"$PR_JSON")
 PR_BASE_SHA=$(jq -r '.base.sha' <<<"$PR_JSON")
+PR_BASE_BRANCH=$(jq -r '.base.ref' <<<"$PR_JSON")
 PR_BASE_REPOSITORY=$(jq -r '.base.repo.full_name' <<<"$PR_JSON")
+
+EXPECTED_WORKFLOW_REF=""
+EXPECTED_WORKFLOW_REF_SHORT=""
+if [[ "$RUN_EVENT" == "pull_request" ]]; then
+  EXPECTED_WORKFLOW_REF="refs/pull/${PR_NUMBER}/merge"
+  EXPECTED_WORKFLOW_REF_SHORT="${PR_NUMBER}/merge"
+else
+  EXPECTED_WORKFLOW_REF="refs/heads/${PR_BASE_BRANCH}"
+  EXPECTED_WORKFLOW_REF_SHORT="$PR_BASE_BRANCH"
+fi
 
 if [[ "$PR_STATE" != "open" || "$PR_HEAD_SHA" != "$RUN_HEAD_SHA" || \
       ( -n "$RUN_BASE_SHA" && "$PR_BASE_SHA" != "$RUN_BASE_SHA" ) || \
       ( -n "$RUN_HEAD_REPOSITORY" && "$PR_HEAD_REPOSITORY" != "$RUN_HEAD_REPOSITORY" ) || \
       ( -n "$RUN_HEAD_BRANCH" && "$PR_HEAD_BRANCH" != "$RUN_HEAD_BRANCH" ) || \
+      ( -n "$RUN_WORKFLOW_REF" && "$RUN_WORKFLOW_REF" != "$EXPECTED_WORKFLOW_REF" && \
+        "$RUN_WORKFLOW_REF" != "$EXPECTED_WORKFLOW_REF_SHORT" ) || \
       "$PR_BASE_REPOSITORY" != "$REPO" ]]; then
   echo "The originating PR is closed, stale, or targets a different repository; skipping."
   exit 0
@@ -116,8 +129,9 @@ if [[ -z "$EVENT_PR_NUMBERS" ]]; then
     echo "Fork workflow_run omitted PR metadata and head repository details; aborting."
     exit 1
   fi
+  RUN_HEAD_OWNER=${RUN_HEAD_REPOSITORY%%/*}
   CANDIDATE_PRS=$(gh api --method GET "repos/${REPO}/pulls" \
-    -f state=all -f head="${RUN_HEAD_REPOSITORY}:${RUN_HEAD_BRANCH}")
+    -f state=all -f head="${RUN_HEAD_OWNER}:${RUN_HEAD_BRANCH}")
   ASSOCIATED_PR_COUNT=$(jq --arg sha "$RUN_HEAD_SHA" --arg repo "$REPO" \
     --arg head_repo "$RUN_HEAD_REPOSITORY" \
     '[.[] | select(.head.sha == $sha and .head.repo.full_name == $head_repo and .base.repo.full_name == $repo)] | length' \
