@@ -6,10 +6,10 @@
 # When called, it MUST obtain central-linter's comment script from the specified ref.
 #
 # SECURITY MODEL: runs privileged (has base-repo context, write token, secrets).
-# It only ever consumes the *sanitized* JSON artifact produced by detect
-# (PR number, head sha, matched paths). It never checks out or executes any
-# PR-provided code. This separation is what makes fork PRs safe: privileged
-# credentials are structurally isolated from anything a fork could influence.
+# It validates the artifact's identity against the originating workflow_run and
+# PR, then recomputes matches using trusted code and the config at the PR's base
+# SHA. Artifact contents are untrusted; their matches are never used directly.
+# It never executes PR-provided code.
 #
 # This stage posts an informational comment only. It does NOT set a failing
 # status -- CODEOWNERS + branch protection remain the enforcement gate.
@@ -19,6 +19,14 @@ on:
     inputs:
       run-id:
         description: "The workflow_run id containing the sanitized artifact"
+        type: string
+        required: true
+      config:
+        description: "Path to the protected-paths config in the consumer repo"
+        type: string
+        default: ".github/protected-paths.yml"
+      detect-workflow-path:
+        description: "Expected path of the workflow that produced the artifact"
         type: string
         required: true
       central-ref:
@@ -40,8 +48,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      # Check out the base repo to get the (trusted) comment script.
+      # Read only the consumer's config from the PR's trusted base commit.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          path: _consumer
 
       # Fetch central-linter comment script from the specified ref into a subdirectory.
       - name: Checkout central-linter scripts
@@ -51,7 +62,7 @@ jobs:
           ref: ${{ inputs.central-ref }}
           path: _central-linter
 
-      - name: Download sanitized result
+      - name: Download detector artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: protected-paths-result
@@ -59,10 +70,14 @@ jobs:
           run-id: ${{ inputs.run-id }}
           github-token: ${{ secrets.token || github.token }}
 
-      - name: Post / update guard comment
+      - name: Validate provenance, recompute matches, and update guard comment
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RESULT_FILE: ${{ runner.temp }}/result/protected-paths-result.json
+          EVENT_FILE: ${{ github.event_path }}
+          RUN_ID: ${{ inputs.run-id }}
+          EXPECTED_DETECT_WORKFLOW_PATH: ${{ inputs.detect-workflow-path }}
+          CONFIG_FILE: _consumer/${{ inputs.config }}
           CENTRAL_LINTER_PATH: _central-linter
         run: "${CENTRAL_LINTER_PATH}/.github/scripts/protected-paths-comment.sh"

@@ -19,4 +19,5 @@ jobs:
     uses: ./.github/workflows/protected-paths-detect.yml
     with:
       config: .github/protected-paths.yml
-      central-ref: ${{ github.ref }}
+      # Always run detector logic from the trusted default branch, never the PR ref.
+      central-ref: main

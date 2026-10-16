@@ -11,9 +11,15 @@ The protected-paths guard is a deterministic (no-AI) supply-chain visibility lay
 The guard uses a two-stage workflow pattern for fork safety:
 
 1. **Detect stage** (`protected-paths-detect.yml`): Runs unprivileged on `pull_request`. It reads the base repo's config and changed file paths via the GitHub API, then produces a sanitized JSON artifact.
-2. **Comment stage** (`protected-paths-comment.yml`): Runs privileged on `workflow_run`. It consumes only the sanitized artifact and posts an informational comment.
+2. **Comment stage** (`protected-paths-comment.yml`): Runs privileged on
+   `workflow_run`. It validates the artifact's PR/run identity, then recomputes
+   matches from the trusted base-commit config before posting an informational
+   comment.
 
-This separation ensures that fork PRs cannot access secrets or write to the repository, even if they modify CI/CD configuration.
+The privileged stage treats the artifact as untrusted input: it verifies the
+originating workflow path, run ID, PR number, head SHA, and base SHA, then reruns
+the detector from the trusted central-linter ref. It never uses artifact-provided
+matches to construct a comment, and never executes PR-provided code.
 
 ## Installation
 
@@ -98,6 +104,8 @@ jobs:
     uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@v1
     with:
       run-id: ${{ github.event.workflow_run.id }}
+      config: .github/protected-paths.yml
+      detect-workflow-path: .github/workflows/protected-paths-detect.yml
     secrets: inherit
 ```
 
@@ -108,6 +116,10 @@ jobs:
 
 **Inputs:**
 - `run-id` (required) — The `workflow_run` id containing the sanitized artifact
+- `config` (default: `.github/protected-paths.yml`) — Config path, read from the
+  PR's base commit
+- `detect-workflow-path` (required) — Exact path of the detect caller workflow;
+  used to validate artifact provenance
 - `central-ref` (default: `v1`) — Git ref of central-linter to fetch scripts from
 
 **Secrets:**

@@ -24,8 +24,10 @@ permissions:
 
 jobs:
   comment:
-    if: github.event.workflow_run.event == 'pull_request'
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
     uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@v1
     with:
       run-id: ${{ github.event.workflow_run.id }}
+      config: .github/protected-paths.yml
+      detect-workflow-path: .github/workflows/protected-paths-detect.yml
     secrets: inherit
