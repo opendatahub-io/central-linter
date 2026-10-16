@@ -36,8 +36,8 @@ They are the **entire** per-repo footprint — no scripts, no logic to maintain:
 All detection/comment logic lives in `opendatahub-io/central-linter`. Pin both
 reusable workflow calls and the `central-ref` script checkout to the same
 reviewed full commit SHA.
-The examples use `<REVIEWED_FULL_SHA>` as a placeholder; replace it with the
-commit selected for your rollout.
+The examples are pinned to the reviewed implementation commit; update both
+references together when selecting a newer version.
 
 ### 2. Create your protected-paths config (REQUIRED)
 
@@ -84,10 +84,10 @@ Create a PR that modifies a protected path (e.g., edit `.github/workflows/some-w
 ### Detect Stage
 
 ```yaml
-uses: opendatahub-io/central-linter/.github/workflows/protected-paths-detect.yml@<REVIEWED_FULL_SHA>
+uses: opendatahub-io/central-linter/.github/workflows/protected-paths-detect.yml@eb29144f0e8de39a5c1062710f9aba0c80ea0e7c
 with:
   config: .github/protected-paths.yml
-  central-ref: <REVIEWED_FULL_SHA>
+  central-ref: eb29144f0e8de39a5c1062710f9aba0c80ea0e7c
 ```
 
 **Inputs:**
@@ -105,7 +105,7 @@ with:
 jobs:
   comment:
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
-    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@<REVIEWED_FULL_SHA>
+    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@eb29144f0e8de39a5c1062710f9aba0c80ea0e7c
     permissions:
       contents: read
       actions: read        # required to download the detect run's artifact via run-id
@@ -114,7 +114,7 @@ jobs:
       run-id: ${{ github.event.workflow_run.id }}
       config: .github/protected-paths.yml
       detect-workflow-path: .github/workflows/protected-paths-detect.yml
-      central-ref: <REVIEWED_FULL_SHA>
+      central-ref: eb29144f0e8de39a5c1062710f9aba0c80ea0e7c
 ```
 
 > **`actions: read` is required.** The comment stage downloads the detect run's artifact from a

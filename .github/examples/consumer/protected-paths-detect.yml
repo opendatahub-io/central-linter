@@ -16,10 +16,10 @@ on:
 
 jobs:
   detect:
-    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-detect.yml@<REVIEWED_FULL_SHA>
+    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-detect.yml@eb29144f0e8de39a5c1062710f9aba0c80ea0e7c
     permissions:
       contents: read
       pull-requests: read
     with:
       config: .github/protected-paths.yml
-      central-ref: <REVIEWED_FULL_SHA>
+      central-ref: eb29144f0e8de39a5c1062710f9aba0c80ea0e7c
