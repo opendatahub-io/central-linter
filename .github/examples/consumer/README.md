@@ -10,16 +10,18 @@ The protected-paths guard is a deterministic (no-AI) supply-chain visibility lay
 
 The guard uses a two-stage workflow pattern for fork safety:
 
-1. **Detect stage** (`protected-paths-detect.yml`): Runs unprivileged on `pull_request`. It reads the base repo's config and changed file paths via the GitHub API, then produces a sanitized JSON artifact.
+1. **Detect stage** (`protected-paths-detect.yml`): Runs unprivileged on `pull_request`. It reads the base repo's config and changed file paths via the GitHub API, then produces a limited JSON result artifact.
 2. **Comment stage** (`protected-paths-comment.yml`): Runs privileged on
    `workflow_run`. It validates the artifact's PR/run identity, then recomputes
    matches from the trusted base-commit config before posting an informational
    comment.
 
 The privileged stage treats the artifact as untrusted input: it verifies the
-originating workflow path, run ID, PR number, head SHA, and base SHA, then reruns
-the detector from the trusted central-linter ref. It never uses artifact-provided
-matches to construct a comment, and never executes PR-provided code.
+originating workflow path, run ID, PR number, head SHA, and base SHA when
+available, then reruns the detector from the trusted central-linter ref. If
+GitHub omits associated PR metadata for a fork run, it resolves the PR using the
+run's head repository, branch, and SHA. It never uses artifact-provided matches
+to construct a comment, and never executes PR-provided code.
 
 ## Installation
 
@@ -31,15 +33,19 @@ They are the **entire** per-repo footprint — no scripts, no logic to maintain:
 - `.github/workflows/protected-paths-detect.yml`  (calls the reusable detect workflow on `pull_request`)
 - `.github/workflows/protected-paths-comment.yml` (calls the reusable comment workflow on `workflow_run`)
 
-All detection/comment logic lives in `opendatahub-io/central-linter` and is versioned via the `@v1` ref
-(Renovate can keep it current).
+All detection/comment logic lives in `opendatahub-io/central-linter`. Pin both
+reusable workflow calls and the `central-ref` script checkout to the same
+reviewed full commit SHA.
+The examples use `<REVIEWED_FULL_SHA>` as a placeholder; replace it with the
+commit selected for your rollout.
 
 ### 2. Create your protected-paths config (REQUIRED)
 
-The guard reads its protected-path list from a config file **in your repo** at the path
-given by the `config` input (default `.github/protected-paths.yml`). **If that file does not
-exist, nothing is protected** — the detect stage emits an empty result and no comment is posted.
-There is no implicit default list applied to consumer repos. Create the file:
+The guard reads its protected-path list from a config file **in your repo** at
+the path given by the `config` input (default `.github/protected-paths.yml`).
+There is no implicit default list applied to consumer repos. The config is
+required: if it is absent, detection emits no matches and the privileged stage
+fails closed without modifying an existing comment. Create the file:
 
 ```yaml
 paths:
@@ -66,7 +72,7 @@ A good starting point is to copy central-linter's own
 ### 3. Optional: customize the detect caller
 
 Edit `.github/workflows/protected-paths-detect.yml` to:
-- Point `central-ref` to a specific version (default: `v1`)
+- Set `central-ref` to the same reviewed full commit SHA used by `uses`
 - Change the `config` path if your protected-paths config is elsewhere
 
 ### 4. Optional: verify with a test PR
@@ -78,14 +84,15 @@ Create a PR that modifies a protected path (e.g., edit `.github/workflows/some-w
 ### Detect Stage
 
 ```yaml
-uses: opendatahub-io/central-linter/.github/workflows/protected-paths-detect.yml@v1
+uses: opendatahub-io/central-linter/.github/workflows/protected-paths-detect.yml@<REVIEWED_FULL_SHA>
 with:
   config: .github/protected-paths.yml
+  central-ref: <REVIEWED_FULL_SHA>
 ```
 
 **Inputs:**
 - `config` (default: `.github/protected-paths.yml`) — Path to your protected-paths config file
-- `central-ref` (default: `v1`) — Git ref of central-linter to fetch scripts from
+- `central-ref` (required) — Full commit SHA of central-linter to fetch scripts from
 
 **Output:** Creates an artifact `protected-paths-result` containing a sanitized JSON file with:
 - `pr_number` — The PR number
@@ -95,18 +102,19 @@ with:
 ### Comment Stage
 
 ```yaml
-permissions:
-  contents: read
-  actions: read        # required to download the detect run's artifact via run-id
-  pull-requests: write
 jobs:
   comment:
-    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@v1
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
+    uses: opendatahub-io/central-linter/.github/workflows/protected-paths-comment.yml@<REVIEWED_FULL_SHA>
+    permissions:
+      contents: read
+      actions: read        # required to download the detect run's artifact via run-id
+      pull-requests: write
     with:
       run-id: ${{ github.event.workflow_run.id }}
       config: .github/protected-paths.yml
       detect-workflow-path: .github/workflows/protected-paths-detect.yml
-    secrets: inherit
+      central-ref: <REVIEWED_FULL_SHA>
 ```
 
 > **`actions: read` is required.** The comment stage downloads the detect run's artifact from a
@@ -120,10 +128,10 @@ jobs:
   PR's base commit
 - `detect-workflow-path` (required) — Exact path of the detect caller workflow;
   used to validate artifact provenance
-- `central-ref` (default: `v1`) — Git ref of central-linter to fetch scripts from
+- `central-ref` (required) — Full commit SHA of central-linter to fetch scripts from
 
 **Secrets:**
-- `token` (optional) — GitHub token; if not provided, uses inherited `github.token`
+- `token` (optional) — GitHub token; if not provided, uses `github.token`
 
 **Behavior:**
 - Idempotent: if a comment already exists, it updates it instead of creating duplicates
@@ -150,7 +158,9 @@ If you customize the detect caller's name, update the comment caller's `workflow
 
 ### Versioning
 
-Both callers reference `opendatahub-io/central-linter/.github/workflows/..@v1`. Update the `@v1` tag to pin a specific version, or use `@main` for the latest (not recommended for production).
+Use the same reviewed full commit SHA for each reusable workflow reference and
+its `central-ref` input. Do not use mutable tags or branch names for privileged
+workflow execution or script checkout.
 
 ### Config File Location
 
@@ -175,7 +185,7 @@ The comment stage will be skipped if:
 ### Token issues
 
 If you see "authentication failed" errors:
-- Ensure `secrets: inherit` is present in the comment caller
+- Ensure the comment job grants `actions: read` and `pull-requests: write`
 - Verify that the repo's GitHub Actions settings allow workflows to write to pull requests
 
 ### Comment step fails on artifact download / comment not posted despite a match

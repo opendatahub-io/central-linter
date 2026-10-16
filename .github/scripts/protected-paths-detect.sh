@@ -54,10 +54,15 @@ echo "Loaded ${#PATTERNS[@]} protected pattern(s)."
 # --- Fetch changed files via API (no checkout of PR code) --------------------
 # --paginate handles PRs with >30 files. previous_filename catches renames OUT
 # of a protected path.
-mapfile -t CHANGED < <(
-  gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" \
-    --paginate --jq '.[] | .filename, (.previous_filename // empty)'
-)
+CHANGED_FILE=$(mktemp)
+if ! gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" \
+  --paginate --jq '.[] | .filename, (.previous_filename // empty)' > "$CHANGED_FILE"; then
+  rm -f "$CHANGED_FILE"
+  echo "Failed to fetch changed files for PR ${PR_NUMBER}; refusing to report a clean result." >&2
+  exit 1
+fi
+mapfile -t CHANGED < "$CHANGED_FILE"
+rm -f "$CHANGED_FILE"
 
 echo "PR changes ${#CHANGED[@]} file path entry(ies)."
 

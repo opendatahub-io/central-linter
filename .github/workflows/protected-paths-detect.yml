@@ -29,19 +29,27 @@ on:
         type: string
         default: ".github/protected-paths.yml"
       central-ref:
-        description: "Git ref of central-linter to fetch scripts from (default: v1)"
+        description: "Full commit SHA of the trusted central-linter scripts"
         type: string
-        default: "v1"
-
-permissions:
-  contents: read
-  pull-requests: read
+        required: true
 
 jobs:
   detect:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
+      - name: Validate trusted script SHA
+        env:
+          CENTRAL_REF: ${{ inputs.central-ref }}
+        run: |
+          if [[ ! "$CENTRAL_REF" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "central-ref must be a full commit SHA." >&2
+            exit 1
+          fi
+
       # Check out the trusted BASE commit to get the config.
       # On a pull_request event, actions/checkout defaults to the PR *merge* ref
       # (refs/pull/N/merge), which includes PR-controlled files. A fork PR could
@@ -51,6 +59,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
 
       # Fetch central-linter scripts from the specified ref into a subdirectory.
       # This allows the reusable workflow to run in any consumer repo while
@@ -61,6 +70,7 @@ jobs:
           repository: opendatahub-io/central-linter
           ref: ${{ inputs.central-ref }}
           path: _central-linter
+          persist-credentials: false
 
       - name: Detect protected-path changes
         env:

@@ -30,29 +30,31 @@ on:
         type: string
         required: true
       central-ref:
-        description: "Git ref of central-linter to fetch scripts from (default: v1)"
+        description: "Full commit SHA of the trusted central-linter scripts"
         type: string
-        default: "v1"
+        required: true
     secrets:
       token:
-        description: "GitHub token for artifact download (optional; uses github.token if not provided)"
+        description: "GitHub token for artifact download (optional; defaults to github.token)"
         required: false
-
-permissions:
-  contents: read
-  actions: read        # required: download-artifact reads the detect run's artifact via run-id
-  pull-requests: write
 
 jobs:
   comment:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read        # required: download-artifact reads the detect run's artifact via run-id
+      pull-requests: write
     steps:
-      # Read only the consumer's config from the PR's trusted base commit.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
-          path: _consumer
+      - name: Validate trusted script SHA
+        env:
+          CENTRAL_REF: ${{ inputs.central-ref }}
+        run: |
+          if [[ ! "$CENTRAL_REF" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo "central-ref must be a full commit SHA." >&2
+            exit 1
+          fi
 
       # Fetch central-linter comment script from the specified ref into a subdirectory.
       - name: Checkout central-linter scripts
@@ -61,6 +63,7 @@ jobs:
           repository: opendatahub-io/central-linter
           ref: ${{ inputs.central-ref }}
           path: _central-linter
+          persist-credentials: false
 
       - name: Download detector artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -78,6 +81,8 @@ jobs:
           EVENT_FILE: ${{ github.event_path }}
           RUN_ID: ${{ inputs.run-id }}
           EXPECTED_DETECT_WORKFLOW_PATH: ${{ inputs.detect-workflow-path }}
-          CONFIG_FILE: _consumer/${{ inputs.config }}
+          CONFIG_PATH: ${{ inputs.config }}
+          CONFIG_FILE: ${{ runner.temp }}/protected-paths.yml
+          RUNNER_TEMP: ${{ runner.temp }}
           CENTRAL_LINTER_PATH: _central-linter
         run: "${CENTRAL_LINTER_PATH}/.github/scripts/protected-paths-comment.sh"

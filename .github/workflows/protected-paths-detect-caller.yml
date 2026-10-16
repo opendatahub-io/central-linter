@@ -10,14 +10,37 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  pull-requests: read
-
 jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      detector_available: ${{ steps.check.outputs.detector_available }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: _trusted_base
+          persist-credentials: false
+      - id: check
+        name: Check detector availability on the trusted base
+        run: |
+          if [[ -f _trusted_base/.github/scripts/protected-paths-detect.sh ]]; then
+            echo "detector_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "detector_available=false" >> "$GITHUB_OUTPUT"
+            echo "Trusted base does not contain the detector yet; skipping bootstrap run."
+          fi
+
   detect:
+    needs: preflight
+    if: needs.preflight.outputs.detector_available == 'true'
     uses: ./.github/workflows/protected-paths-detect.yml
+    permissions:
+      contents: read
+      pull-requests: read
     with:
       config: .github/protected-paths.yml
-      # Always run detector logic from the trusted default branch, never the PR ref.
-      central-ref: main
+      # The base commit is trusted and immutable; never use the PR ref.
+      central-ref: ${{ github.event.pull_request.base.sha }}

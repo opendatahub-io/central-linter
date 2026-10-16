@@ -11,18 +11,17 @@ on:
     workflows: ["Protected Paths (detect)"]
     types: [completed]
 
-permissions:
-  contents: read
-  actions: read        # required: reusable comment workflow downloads the detect artifact via run-id
-  pull-requests: write
-
 jobs:
   comment:
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
     uses: ./.github/workflows/protected-paths-comment.yml
+    permissions:
+      contents: read
+      actions: read        # required: reusable comment workflow downloads the detect artifact via run-id
+      pull-requests: write
     with:
       run-id: ${{ github.event.workflow_run.id }}
       config: .github/protected-paths.yml
       detect-workflow-path: .github/workflows/protected-paths-detect-caller.yml
-      central-ref: main
-    secrets: inherit
+      # workflow_run workflows execute from the default branch; github.sha is immutable.
+      central-ref: ${{ github.sha }}

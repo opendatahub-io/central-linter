@@ -14,11 +14,13 @@
 # Required env:
 #   GH_TOKEN      - token with pull-requests: write (base repo)
 #   REPO          - owner/name
-#   RESULT_FILE   - path to the sanitized JSON artifact
+#   RESULT_FILE   - path to the untrusted detector JSON artifact
 #   EVENT_FILE    - workflow_run event payload
 #   RUN_ID        - workflow_run id for the artifact
 #   EXPECTED_DETECT_WORKFLOW_PATH - trusted path of the detect caller workflow
-#   CONFIG_FILE   - config checked out from the PR's base SHA
+#   CONFIG_PATH   - path to the config file in the consumer repository
+#   CONFIG_FILE   - temporary path where the trusted base config is written
+#   RUNNER_TEMP   - directory for temporary files
 #   CENTRAL_LINTER_PATH - checkout containing the trusted detector script
 
 set -euo pipefail
@@ -29,7 +31,9 @@ set -euo pipefail
 : "${EVENT_FILE:?}"
 : "${RUN_ID:?}"
 : "${EXPECTED_DETECT_WORKFLOW_PATH:?}"
+: "${CONFIG_PATH:?}"
 : "${CONFIG_FILE:?}"
+: "${RUNNER_TEMP:?}"
 : "${CENTRAL_LINTER_PATH:?}"
 
 MARKER="<!-- protected-paths-guard -->"
@@ -55,32 +59,87 @@ EVENT_RUN_ID=$(jq -r '.workflow_run.id // empty' "$EVENT_FILE")
 RUN_PATH=$(jq -r '.workflow_run.path // empty' "$EVENT_FILE")
 RUN_HEAD_SHA=$(jq -r '.workflow_run.head_sha // empty' "$EVENT_FILE")
 RUN_REPOSITORY=$(jq -r '.workflow_run.repository.full_name // empty' "$EVENT_FILE")
-EVENT_PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$EVENT_FILE")
-RUN_BASE_SHA=$(jq -r '.workflow_run.pull_requests[0].base.sha // empty' "$EVENT_FILE")
+EVENT_PR_NUMBERS=$(jq -r '[.workflow_run.pull_requests[]?.number] | unique | .[]' "$EVENT_FILE")
+RUN_BASE_SHAS=$(jq -r '[.workflow_run.pull_requests[]?.base.sha] | unique | .[]' "$EVENT_FILE")
 RUN_HEAD_REPOSITORY=$(jq -r '.workflow_run.head_repository.full_name // empty' "$EVENT_FILE")
+RUN_HEAD_BRANCH=$(jq -r '.workflow_run.head_branch // empty' "$EVENT_FILE")
+
+# workflow_run.path is normally a path; accept a pull_request merge-ref suffix
+# when GitHub includes one, but never accept a suffix for another ref or PR.
+RUN_WORKFLOW_PATH=${RUN_PATH%%@*}
+RUN_WORKFLOW_REF=""
+if [[ "$RUN_PATH" == *@* ]]; then
+  RUN_WORKFLOW_REF=${RUN_PATH#*@}
+fi
 
 if [[ "$RUN_EVENT" != "pull_request" || "$RUN_CONCLUSION" != "success" || \
-      "$EVENT_RUN_ID" != "$RUN_ID" || "$RUN_PATH" != "$EXPECTED_DETECT_WORKFLOW_PATH" || \
-      "$RUN_REPOSITORY" != "$REPO" || "$EVENT_PR_NUMBER" != "$PR_NUMBER" || \
+      "$EVENT_RUN_ID" != "$RUN_ID" || "$RUN_WORKFLOW_PATH" != "$EXPECTED_DETECT_WORKFLOW_PATH" || \
+      ( -n "$RUN_WORKFLOW_REF" && "$RUN_WORKFLOW_REF" != "refs/pull/${PR_NUMBER}/merge" ) || \
+      "$RUN_REPOSITORY" != "$REPO" || \
       "$RUN_HEAD_SHA" != "$ARTIFACT_HEAD_SHA" ]]; then
   echo "Artifact provenance does not match the expected workflow run and PR; aborting."
   exit 1
 fi
+
+if [[ -n "$EVENT_PR_NUMBERS" && "$EVENT_PR_NUMBERS" != "$PR_NUMBER" ]]; then
+  echo "Artifact PR number does not match the workflow_run pull request; aborting."
+  exit 1
+fi
+if [[ -n "$RUN_BASE_SHAS" && $(printf '%s\n' "$RUN_BASE_SHAS" | wc -l | tr -d ' ') != 1 ]]; then
+  echo "workflow_run contains ambiguous pull request base commits; aborting."
+  exit 1
+fi
+RUN_BASE_SHA=${RUN_BASE_SHAS:-}
 
 # Recheck the live PR to reject stale runs and ensure it still targets this repo.
 PR_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}")
 PR_STATE=$(jq -r '.state' <<<"$PR_JSON")
 PR_HEAD_SHA=$(jq -r '.head.sha' <<<"$PR_JSON")
 PR_HEAD_REPOSITORY=$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")
+PR_HEAD_BRANCH=$(jq -r '.head.ref' <<<"$PR_JSON")
 PR_BASE_SHA=$(jq -r '.base.sha' <<<"$PR_JSON")
 PR_BASE_REPOSITORY=$(jq -r '.base.repo.full_name' <<<"$PR_JSON")
 
 if [[ "$PR_STATE" != "open" || "$PR_HEAD_SHA" != "$RUN_HEAD_SHA" || \
-      "$PR_BASE_SHA" != "$RUN_BASE_SHA" || "$PR_HEAD_REPOSITORY" != "$RUN_HEAD_REPOSITORY" || \
+      ( -n "$RUN_BASE_SHA" && "$PR_BASE_SHA" != "$RUN_BASE_SHA" ) || \
+      ( -n "$RUN_HEAD_REPOSITORY" && "$PR_HEAD_REPOSITORY" != "$RUN_HEAD_REPOSITORY" ) || \
+      ( -n "$RUN_HEAD_BRANCH" && "$PR_HEAD_BRANCH" != "$RUN_HEAD_BRANCH" ) || \
       "$PR_BASE_REPOSITORY" != "$REPO" ]]; then
   echo "The originating PR is closed, stale, or targets a different repository; skipping."
   exit 0
 fi
+
+# When GitHub omits pull_requests from workflow_run (seen for some fork runs),
+# confirm this artifact's PR is associated with the run's head commit.
+if [[ -z "$EVENT_PR_NUMBERS" ]]; then
+  if [[ -z "$RUN_HEAD_REPOSITORY" || -z "$RUN_HEAD_BRANCH" ]]; then
+    echo "Fork workflow_run omitted PR metadata and head repository details; aborting."
+    exit 1
+  fi
+  CANDIDATE_PRS=$(gh api --method GET "repos/${REPO}/pulls" \
+    -f state=all -f head="${RUN_HEAD_REPOSITORY}:${RUN_HEAD_BRANCH}")
+  ASSOCIATED_PR_COUNT=$(jq --arg sha "$RUN_HEAD_SHA" --arg repo "$REPO" \
+    --arg head_repo "$RUN_HEAD_REPOSITORY" \
+    '[.[] | select(.head.sha == $sha and .head.repo.full_name == $head_repo and .base.repo.full_name == $repo)] | length' \
+    <<<"$CANDIDATE_PRS")
+  ASSOCIATED_PR_NUMBER=$(jq -r --arg sha "$RUN_HEAD_SHA" --arg repo "$REPO" \
+    --arg head_repo "$RUN_HEAD_REPOSITORY" \
+    '[.[] | select(.head.sha == $sha and .head.repo.full_name == $head_repo and .base.repo.full_name == $repo)][0].number // empty' \
+    <<<"$CANDIDATE_PRS")
+  if [[ "$ASSOCIATED_PR_COUNT" != "1" || "$ASSOCIATED_PR_NUMBER" != "$PR_NUMBER" ]]; then
+    echo "Artifact PR is not uniquely associated with the originating workflow run; aborting."
+    exit 1
+  fi
+fi
+
+# Fetch the configuration at the live base SHA (the caller never checks out an
+# event-provided PR array, which may be empty for fork runs).
+CONFIG_JSON=$(gh api "repos/${REPO}/contents/${CONFIG_PATH}?ref=${PR_BASE_SHA}")
+if [[ $(jq -r '.encoding // empty' <<<"$CONFIG_JSON") != "base64" ]]; then
+  echo "Protected-path config response was not base64 encoded; aborting."
+  exit 1
+fi
+printf '%s' "$(jq -r '.content' <<<"$CONFIG_JSON" | tr -d '\n')" | base64 --decode > "$CONFIG_FILE"
 
 # Never trust the artifact's matched paths. Re-run the detector from the trusted
 # central-linter checkout against the trusted base-commit config and GitHub API.
@@ -97,10 +156,9 @@ RESULT_FILE="$VERIFIED_RESULT"
 MATCH_COUNT=$(jq -r '.matches | length' "$RESULT_FILE")
 
 # Locate any existing guard comment (idempotent upsert across re-runs).
-EXISTING_ID=$(
-  gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
-    --jq "map(select(.body | contains(\"${MARKER}\"))) | .[0].id // empty"
-)
+EXISTING_IDS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+  --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- protected-paths-guard -->"))) | .id')
+EXISTING_ID=${EXISTING_IDS%%$'\n'*}
 
 if [[ "$MATCH_COUNT" -eq 0 ]]; then
   # No protected paths touched. Remove a stale comment if one exists so the
@@ -125,7 +183,17 @@ BODY_FILE=$(mktemp)
   echo ""
   echo "| Protected file |"
   echo "|----------------|"
-  jq -r '.matches[] | "| `" + . + "` |"' "$RESULT_FILE"
+  jq -r '
+    def table_escape:
+      gsub("&"; "&amp;")
+      | gsub("<"; "&lt;")
+      | gsub(">"; "&gt;")
+      | gsub("\\|"; "&#124;")
+      | gsub("`"; "&#96;")
+      | gsub("\r"; "&#13;")
+      | gsub("\n"; "&#10;");
+    .matches[] | "| <code>" + table_escape + "</code> |"
+  ' "$RESULT_FILE"
   echo ""
   echo "> Approval is enforced by \`CODEOWNERS\`. This comment is an informational safeguard so a sensitive change is never approved unnoticed."
 } > "$BODY_FILE"
