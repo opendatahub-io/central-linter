@@ -132,6 +132,34 @@ lint:
     - make -f $HOME/Makefile linter-central
 ```
 
+### Pre-commit-based lint jobs
+
+`templates/lint.gitlab-ci.yml` defines two jobs that run pre-commit in a stock
+UBI9 Python image instead of the central-linter container:
+
+- `.linters` — copies the shared pre-commit configuration into your project and
+  runs `pre-commit run --all-files` (yamllint, ruff, renovate-config-validator)
+- `.jira-ticket-linter` — validates commit titles and MR metadata against the
+  AIPCC guidelines; needs a `GITLAB_API_TOKEN` CI variable
+
+The template and the pip package it installs (`script/` and `lint/config/`)
+were migrated from the unmaintained `platform-engineering-org/gitlab-ci`
+repository. Hook and Node versions are pinned in `lint/config/.pre-commit-config.yaml`.
+
+```yaml
+include:
+  - remote: https://github.com/opendatahub-io/central-linter/raw/v0.4.1/templates/lint.gitlab-ci.yml
+
+linters:
+  extends: .linters
+
+jira-ticket-linter:
+  extends: .jira-ticket-linter
+```
+
+Pin the URL to a released tag. The jobs install the pip package from this
+repository at the version pinned in `RES_VERSION`.
+
 ## Local Development Integration
 
 This section shows how to integrate central-linter into client repositories for local development. Use these patterns to ensure developers can run the same linters locally that run in CI/CD.

@@ -1,0 +1,38 @@
+image: registry.access.redhat.com/ubi9/python-312:9.6-1752571600
+
+default:
+  tags:
+    - aipcc
+
+variables:
+  RES_REPO: "github.com/opendatahub-io/central-linter.git"
+  RES_VERSION: "v0.4.1"
+  INSTALL_RES: "pip install git+https://$RES_REPO@$RES_VERSION"
+
+stages:
+  - checks
+
+.jira-ticket-linter:
+  stage: checks
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  before_script:
+    - python3 -m venv .venv
+    - source .venv/bin/activate
+    - $INSTALL_RES
+    - git config --global --add safe.directory $CI_PROJECT_DIR
+  script:
+    - jira_ticket_linter.py
+
+.linters:
+  stage: checks
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  before_script:
+    - python3 -m venv .venv
+    - source .venv/bin/activate
+    - $INSTALL_RES
+    - git config --global --add safe.directory $CI_PROJECT_DIR
+  script:
+    - copy_linter_config.py
+    - pre-commit run --all-files --verbose
