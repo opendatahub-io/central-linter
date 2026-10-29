@@ -1,0 +1,5 @@
+.tekton/*
+argfile.conf
+ci
+bib.yaml
+renovate.json
