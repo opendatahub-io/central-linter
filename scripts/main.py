@@ -1,15 +1,19 @@
 """Main orchestration for the AIPCC MR/commit linter."""
 
 import os
+import re
 import sys
 from typing import List
 
-from config import BOT_NAMES, GitLabConfig, JiraConfig, MergeRequestInfo
+from config import BOT_NAMES, CommitInfo, GitLabConfig, JiraConfig, MergeRequestInfo
 from log import error, logger
 from git_utils.commands import configure_git_safe_directory, get_commit_info, get_commits_in_range, run_git_command
 from gitlab.api import get_mr_author, get_mr_commits_from_api
 from validators.commit import validate_commit
 from validators.merge_request import validate_mr_title, validate_mr_description, validate_no_protected_type_closure
+
+
+GITHUB_APP_BOT_EMAIL = re.compile(r"[0-9]+\+[^@]+\[bot\]@users\.noreply\.github\.com", re.IGNORECASE)
 
 
 def check_bot_exemption() -> bool:
@@ -38,6 +42,11 @@ def check_bot_exemption() -> bool:
         return True
 
     return False
+
+
+def is_bot_commit(commit: CommitInfo) -> bool:
+    """Recognize listed bot authors and GitHub App bot email addresses."""
+    return commit.author_name in BOT_NAMES or bool(GITHUB_APP_BOT_EMAIL.fullmatch(commit.author_email))
 
 
 def validate_all_commits(config: GitLabConfig) -> List[str]:
@@ -88,6 +97,9 @@ def validate_all_commits(config: GitLabConfig) -> List[str]:
     all_errors = []
     for commit_id in commit_ids:
         commit = get_commit_info(commit_id)
+        if os.getenv("GITLAB_CI") != "true" and is_bot_commit(commit):
+            logger.info(f"Commit {commit_id} by bot author {commit.author_name}, ignoring")
+            continue
         errors = validate_commit(commit)
         all_errors.extend(errors)
 

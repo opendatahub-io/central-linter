@@ -120,6 +120,7 @@ class CommitInfo:
     title: str
     body: str
     author_email: str = ""
+    author_name: str = ""
 
 
 @dataclass

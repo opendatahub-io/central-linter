@@ -37,6 +37,63 @@ class TestCheckBotExemption:
 
 
 class TestValidateAllCommits:
+    @patch('main.get_mr_commits_from_api', return_value=None)
+    @patch('main.get_commits_in_range')
+    @patch('main.get_commit_info')
+    @patch('main.validate_commit')
+    @patch('main.run_git_command', return_value=(True, ''))
+    @patch.dict('os.environ', {}, clear=True)
+    def test_skips_bot_authored_commits_outside_gitlab(
+        self, mock_git, mock_validate, mock_get_info, mock_get_range, mock_api
+    ):
+        commits = [
+            CommitInfo('listed', 'chore(deps): update', '',
+                       author_email='aipcc-cicd-bot@redhat.com', author_name='aipcc-cicd-bot'),
+            CommitInfo('app', 'chore(deps): update', '',
+                       author_email='170854209+konflux-internal-p02[bot]@users.noreply.github.com',
+                       author_name='konflux-internal-p02[bot]'),
+            CommitInfo('human', 'bad title', '',
+                       author_email='dev@redhat.com', author_name='Dev User'),
+            CommitInfo('wrong-domain', 'bad title', '',
+                       author_email='170854209+other[bot]@example.com', author_name='other[bot]'),
+            CommitInfo('missing-id', 'bad title', '',
+                       author_email='other[bot]@users.noreply.github.com', author_name='other[bot]'),
+        ]
+        mock_get_range.return_value = [f'{commit.commit_id} {commit.title}' for commit in commits]
+        mock_get_info.side_effect = commits
+        mock_validate.side_effect = [['human error'], ['wrong-domain error'], ['missing-id error']]
+        config = GitLabConfig(None, None, None, None, 'main')
+
+        errors = validate_all_commits(config)
+
+        assert errors == ['human error', 'wrong-domain error', 'missing-id error']
+        assert [call.args[0].commit_id for call in mock_validate.call_args_list] == [
+            'human', 'wrong-domain', 'missing-id'
+        ]
+        mock_api.assert_called_once_with(config)
+        mock_get_range.assert_called_once_with('main')
+
+    @patch('main.get_mr_commits_from_api', return_value=['listed', 'app'])
+    @patch('main.get_commit_info')
+    @patch('main.validate_commit', return_value=['validation error'])
+    @patch('main.run_git_command', return_value=(True, ''))
+    @patch.dict('os.environ', {'GITLAB_CI': 'true'}, clear=True)
+    def test_gitlab_still_validates_bot_commits(
+        self, mock_git, mock_validate, mock_get_info, mock_api
+    ):
+        mock_get_info.side_effect = [
+            CommitInfo('listed', 'bad title', '', author_name='aipcc-cicd-bot'),
+            CommitInfo('app', 'bad title', '',
+                       author_email='170854209+other[bot]@users.noreply.github.com'),
+        ]
+        config = GitLabConfig('123', '456', None, None, 'main')
+
+        errors = validate_all_commits(config)
+
+        assert errors == ['validation error', 'validation error']
+        assert mock_validate.call_count == 2
+        mock_api.assert_called_once_with(config)
+
     @patch('main.get_mr_commits_from_api')
     @patch('main.get_commit_info')
     @patch('main.validate_commit')
