@@ -60,7 +60,7 @@ if mrtitle is None:
     mrtitle = "local branch"
 
 AIPCCPolicyDocMessage = "See https://docs.google.com/document/d/1TAicyqGKKELzaYL4o-Plz2s7tFUhOctZFzHErMQSc8c for AIPCC Commit and Merge Request Guidelines."
-JIRA_PATTERN = re.compile(r"((RHELAI|RHOAIENG|AIPCC|INFERENG|RHAIENG)-\d+)", flags=re.MULTILINE)
+JIRA_PATTERN = re.compile(r"(([A-Z]{2,})-(\d+))", flags=re.MULTILINE)
 JIRA_INTERNAL = re.compile(r"INTERNAL", flags=re.MULTILINE)
 base_sha = os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA", "main")
 mrid = os.getenv("CI_MERGE_REQUEST_IID", "(local branch)")
@@ -78,13 +78,16 @@ for commit in commits.splitlines():
 
     # check that the title contains a Jira Ticket ID
     title = commit.partition(" ")[2]
-    if not JIRA_PATTERN.findall(title):
-        if not JIRA_INTERNAL.findall(title):
-            error(
-                f"ERROR: Commit {commitid}: title must begin with a valid Jira ticket (RHELAI,RHOAIENG, AIPCC, INFERENG, RHAIENG or INTERNAL).\n{AIPCCPolicyDocMessage}"
-            )
-            sys.exit(1)
+    # INTERNAL is checked first: a description may legitimately mention a
+    # ticket-like id (e.g. "INTERNAL: fix CVE-2026-1234"), and that must not
+    # bypass the INTERNAL file whitelist below.
+    if not JIRA_INTERNAL.findall(title) and not JIRA_PATTERN.findall(title):
+        error(
+            f"ERROR: Commit {commitid}: title must begin with a valid Jira ticket (two or more uppercase letters, a dash and a number, e.g. RHAI-21300) or INTERNAL.\n{AIPCCPolicyDocMessage}"
+        )
+        sys.exit(1)
 
+    if JIRA_INTERNAL.findall(title):
         # The Jira ticket id is INTERNAL.  Compare the modified files to the files in
         # https://github.com/opendatahub-io/central-linter/blob/main/lint/config/linterignore
         # This file contains the names of files that can be modified when using
@@ -169,7 +172,7 @@ for commit in commits.splitlines():
 # verify that the Merge Request title begins with a Jira ID
 if mrtitle != "local branch" and not JIRA_PATTERN.findall(mrtitle) and not JIRA_INTERNAL.findall(mrtitle):
     error(
-        f"ERROR: Merge Request {mrid}: title must begin with a valid Jira ticket (RHELAI, RHOAIENG, AIPCC, INFERENG, RHAIENG or INTERNAL).\n{AIPCCPolicyDocMessage}"
+        f"ERROR: Merge Request {mrid}: title must begin with a valid Jira ticket (two or more uppercase letters, a dash and a number, e.g. RHAI-21300) or INTERNAL.\n{AIPCCPolicyDocMessage}"
     )
     sys.exit(1)
 
