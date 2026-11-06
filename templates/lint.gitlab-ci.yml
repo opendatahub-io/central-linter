@@ -1,7 +1,8 @@
-# The central-linter image is based on ubi10/nodejs-22: Node comes from a
-# Red Hat-built image instead of being downloaded by nodeenv at hook-install
-# time (RHAI-19797). The .pre-commit-config.yaml renovate hook uses
-# language_version: system to pick it up.
+# Lint jobs run in the central-linter container: every linter is preinstalled
+# at a pinned version, so jobs download nothing at run time (RHAI-19797,
+# RHAI-21300). The .linters job uses the image's make targets instead of
+# pre-commit, which cloned hook repositories and installed toolchains from
+# PyPI/npm on every run.
 image: quay.io/aipcc-cicd/central-linter:v0.4.2
 
 default:
@@ -33,10 +34,6 @@ stages:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   before_script:
-    - python3 -m venv .venv
-    - source .venv/bin/activate
-    - $INSTALL_RES
     - git config --global --add safe.directory $CI_PROJECT_DIR
   script:
-    - copy_linter_config.py
-    - pre-commit run --all-files --verbose
+    - make -f $HOME/Makefile linter-ruff-check linter-yamllint linter-renovate linter-shellcheck linter-markdownlint
