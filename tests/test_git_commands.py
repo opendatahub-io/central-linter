@@ -43,14 +43,18 @@ class TestGetCommitInfo:
     def test_builds_commit_info(self, mock_git):
         mock_git.return_value = (
             True,
-            "RHELAI-1234: Fix bug\x00dev@redhat.com\x00This is the body\n\nSigned-off-by: Dev\n",
+            "RHELAI-1234: Fix bug\x00Dev User\x00dev@redhat.com\x00This is the body\n\nSigned-off-by: Dev\n",
         )
         result = get_commit_info("abc123")
         assert isinstance(result, CommitInfo)
         assert result.commit_id == "abc123"
         assert result.title == "RHELAI-1234: Fix bug"
+        assert result.author_name == "Dev User"
         assert result.author_email == "dev@redhat.com"
         assert "Signed-off-by" in result.body
+        mock_git.assert_called_once_with(
+            ["git", "log", "-1", "abc123", "--format=%s%x00%an%x00%ae%x00%b"]
+        )
 
 
 class TestGetCommitModifiedFiles:
