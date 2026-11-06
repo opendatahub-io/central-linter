@@ -1,4 +1,12 @@
 ---
+# Shared yamllint configuration
+#
+# This config is used by:
+# 1. Central-linter repository (self-linting via symlink .yamllint -> config/yamllint.yaml)
+# 2. Client repositories that don't provide their own .yamllint (bundled in image at ~/.config/yamllint.yaml)
+#
+# Based on the default relaxed configuration:
+# https://yamllint.readthedocs.io/en/stable/configuration.html#default-configuration
 
 extends: default
 
@@ -24,7 +32,7 @@ rules:
     level: warning
     indent-sequences: consistent
   line-length:
-    max: 120
     level: warning
+    max: 120
     allow-non-breakable-inline-mappings: true
   truthy: disable

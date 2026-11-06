@@ -6,6 +6,12 @@ on:
     tags: ['*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag to push (e.g. v0.4.2). Leave empty for a plain main build."
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,6 +26,7 @@ env:
   CONTAINERFILE_PATH: Containerfile
   CONTEXT_DIR: .
   QUAY_ROBOT_USER: aipcc-cicd+central_linter_github
+  DISPATCH_VERSION: ${{ inputs.version }}
 
 jobs:
   build:
@@ -86,7 +93,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     needs: [build, lint, test]
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    # Only main-ref runs (branch pushes and workflow_dispatch on main): the
+    # Quay robot federation matches the GitHub OIDC subject by exact string
+    # equality and is pinned to refs/heads/main, so runs on any other ref
+    # (tags, feature branches, pull requests) fail the token exchange.
+    # Release version tags are pushed by dispatching this workflow on main
+    # with the version input:
+    #   gh workflow run CI --ref main -f version=vX.Y.Z
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       id-token: write

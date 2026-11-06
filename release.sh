@@ -91,10 +91,12 @@ else
     git checkout -b "$BRANCH"
 
     perl -i -pe "s|quay.io/aipcc-cicd/central-linter:v[0-9][0-9.]*|quay.io/aipcc-cicd/central-linter:${VERSION}|g" \
-        templates/linter-central.yml
-    echo "Updated templates/linter-central.yml"
+        templates/linter-central.yml templates/lint.gitlab-ci.yml
+    perl -i -pe "s|RES_VERSION: \"v[0-9.]+\"|RES_VERSION: \"${VERSION}\"|" \
+        templates/lint.gitlab-ci.yml
+    echo "Updated templates/linter-central.yml and templates/lint.gitlab-ci.yml"
 
-    git add templates/linter-central.yml
+    git add templates/linter-central.yml templates/lint.gitlab-ci.yml
     git commit -s -m "INTERNAL: Release ${VERSION}"
     git push -u origin "$BRANCH"
 
