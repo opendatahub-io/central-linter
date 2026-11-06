@@ -13,4 +13,7 @@ repos:
     rev: 5fb1699087337bc659807a9dba856a1926463229
     hooks:
       - id: renovate-config-validator
-        language_version: "24.22.2"
+        # Use the Node already present in the environment (the central-linter
+        # image ships Red Hat's Node 22) instead of downloading a third-party
+        # binary via nodeenv (RHAI-19797).
+        language_version: system

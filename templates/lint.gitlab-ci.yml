@@ -1,4 +1,8 @@
-image: registry.access.redhat.com/ubi9/python-312:9.6-1752571600
+# The central-linter image is based on ubi10/nodejs-22: Node comes from a
+# Red Hat-built image instead of being downloaded by nodeenv at hook-install
+# time (RHAI-19797). The .pre-commit-config.yaml renovate hook uses
+# language_version: system to pick it up.
+image: quay.io/aipcc-cicd/central-linter:v0.4.2
 
 default:
   tags:
@@ -6,7 +10,7 @@ default:
 
 variables:
   RES_REPO: "github.com/opendatahub-io/central-linter.git"
-  RES_VERSION: "v0.4.1"
+  RES_VERSION: "v0.4.2"
   INSTALL_RES: "pip install git+https://$RES_REPO@$RES_VERSION"
 
 stages:
