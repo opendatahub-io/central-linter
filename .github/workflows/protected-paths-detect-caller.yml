@@ -1,0 +1,24 @@
+# Central-linter self-guard: call the reusable detect workflow.
+#
+# This caller demonstrates how central-linter dogfoods its own protected-paths
+# guard. Consumer repos should use the example workflows in .github/examples/consumer/
+# instead of copying the reusable workflow files.
+
+name: Protected Paths (detect)
+
+on:
+  # pull_request_target loads this caller from the trusted base branch. The
+  # reusable detector reads only the base config and PR file paths via the API.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  detect:
+    uses: ./.github/workflows/protected-paths-detect.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      config: .github/protected-paths.yml
+      # The base commit is trusted and immutable; never use the PR ref.
+      central-ref: ${{ github.event.pull_request.base.sha }}

@@ -1,0 +1,28 @@
+# Default protected-paths configuration for the central-linter guard.
+#
+# This is a DETERMINISTIC (no AI) supply-chain visibility layer. It does not
+# gate merges by itself -- CODEOWNERS + branch protection remain the actual
+# approval gate. This guard only surfaces, via a PR comment, when a pull
+# request touches sensitive paths, so a reviewer never approves blind.
+#
+# Consumer repos may override this file at .github/protected-paths.yml.
+#
+# Format: a list of path prefixes / glob patterns. A pattern ending in "/"
+# is treated as a directory prefix match. Other patterns use shell-style
+# matching against the changed file path.
+
+paths:
+  # AI assistant configuration (primary breach vector -- see AIPCC-18022)
+  - ".claude/"
+  - ".cursor/"
+  - "AGENTS.md"
+  - "CLAUDE.md"
+  # CI / supply-chain configuration
+  - ".github/workflows/"
+  - ".github/actions/"
+  - ".gitlab-ci.yml"
+  - ".tekton/"
+  # Access control -- self-protection so the gate can't be silently removed
+  - "CODEOWNERS"
+  - ".github/CODEOWNERS"
+  - ".github/protected-paths.yml"
